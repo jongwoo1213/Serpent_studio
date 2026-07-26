@@ -84,6 +84,7 @@ export default function Home() {
   const [selectedId, setSelectedId] = useState<string>("");
   const [view, setView] = useState<"builder" | "source">("builder");
   const [panel, setPanel] = useState<"preview" | "issues">("preview");
+  const [previewExpanded, setPreviewExpanded] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -184,7 +185,7 @@ export default function Home() {
         </div>
       </header>
 
-      <section className="workspace">
+      <section className={previewExpanded ? "workspace preview-expanded" : "workspace"}>
         <aside className="sidebar">
           <div className="sidebar-heading">
             <span>모델 구성</span>
@@ -313,9 +314,25 @@ export default function Home() {
             <button className={panel === "issues" ? "active" : ""} onClick={() => setPanel("issues")}>
               검사 결과 <span>{issues.length}</span>
             </button>
+            <button
+              className="panel-expand"
+              aria-label={previewExpanded ? "편집 화면과 함께 보기" : "평면도 넓게 보기"}
+              aria-pressed={previewExpanded}
+              title={previewExpanded ? "편집 화면과 함께 보기" : "평면도 넓게 보기"}
+              onClick={() => {
+                setPanel("preview");
+                setPreviewExpanded(!previewExpanded);
+              }}
+            >
+              {previewExpanded ? "⇥" : "⇤"}
+            </button>
           </div>
           {panel === "preview" ? (
-            <GeometryPreview cards={cards} />
+            <GeometryPreview
+              cards={cards}
+              expanded={previewExpanded}
+              selectedSurfaceId={selected?.kind === "surface" ? selectedData.name : ""}
+            />
           ) : (
             <div className="issues">
               <div className="issue-summary">
@@ -349,7 +366,7 @@ export default function Home() {
       </footer>
 
       {logOpen && (
-        <div className="console">
+        <div className={previewExpanded ? "console preview-expanded" : "console"}>
           <div className="console-head"><span>입력 검사 콘솔</span><button onClick={() => setLogOpen(false)}>×</button></div>
           <pre>
 {`SERPENT Studio validator
@@ -366,10 +383,19 @@ ${errors ? `Found ${errors} error(s) and ${issues.length - errors} warning(s).` 
   );
 }
 
-function GeometryPreview({ cards }: { cards: SerpentCard[] }) {
+function GeometryPreview({
+  cards,
+  expanded,
+  selectedSurfaceId,
+}: {
+  cards: SerpentCard[];
+  expanded: boolean;
+  selectedSurfaceId: string;
+}) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const [basis, setBasis] = useState<PlotBasis>("xy");
   const [slice, setSlice] = useState(0);
+  const [activeSurfaceId, setActiveSurfaceId] = useState("");
   const model = useMemo(() => parseGeometryModel(cards), [cards]);
   const bounds = useMemo(() => geometryPlotBounds(model, basis), [model, basis]);
   const axisNames = basis === "xy" ? ["X", "Y", "z"] : basis === "xz" ? ["X", "Z", "y"] : ["Y", "Z", "x"];
@@ -387,6 +413,20 @@ function GeometryPreview({ cards }: { cards: SerpentCard[] }) {
       return ["cyl", "cylz", "pad", "py", "pz", "sph"].includes(surface.type);
     });
   }, [model, basis, slice]);
+
+  useEffect(() => {
+    if (visibleSurfaces.some((surface) => surface.id === selectedSurfaceId)) {
+      setActiveSurfaceId(selectedSurfaceId);
+    }
+  }, [visibleSurfaces, selectedSurfaceId]);
+
+  useEffect(() => {
+    if (!visibleSurfaces.some((surface) => surface.id === activeSurfaceId)) {
+      setActiveSurfaceId(visibleSurfaces[0]?.id ?? "");
+    }
+  }, [visibleSurfaces, activeSurfaceId]);
+
+  const activeSurface = visibleSurfaces.find((surface) => surface.id === activeSurfaceId);
 
   useEffect(() => {
     const element = canvas.current;
@@ -408,6 +448,15 @@ function GeometryPreview({ cards }: { cards: SerpentCard[] }) {
     const image = rasterContext.createImageData(resolution, resolution);
     const hSpan = bounds.horizontalMax - bounds.horizontalMin;
     const vSpan = bounds.verticalMax - bounds.verticalMin;
+    const scale = Math.min(width / hSpan, height / vSpan);
+    const plotWidth = hSpan * scale;
+    const plotHeight = vSpan * scale;
+    const plotLeft = (width - plotWidth) / 2;
+    const plotTop = (height - plotHeight) / 2;
+    const toCanvas = (horizontal: number, vertical: number) => ({
+      x: plotLeft + (horizontal - bounds.horizontalMin) * scale,
+      y: plotTop + (bounds.verticalMax - vertical) * scale,
+    });
 
     for (let py = 0; py < resolution; py += 1) {
       const vertical = bounds.verticalMax - (py + 0.5) / resolution * vSpan;
@@ -428,14 +477,12 @@ function GeometryPreview({ cards }: { cards: SerpentCard[] }) {
     }
 
     rasterContext.putImageData(image, 0, 0);
+    context.fillStyle = "#071714";
+    context.fillRect(0, 0, width, height);
     context.imageSmoothingEnabled = false;
-    context.drawImage(raster, 0, 0, width, height);
+    context.drawImage(raster, plotLeft, plotTop, plotWidth, plotHeight);
 
     if (basis === "xy") {
-      const toCanvas = (x: number, y: number) => ({
-        x: (x - bounds.horizontalMin) / hSpan * width,
-        y: (bounds.verticalMax - y) / vSpan * height,
-      });
       for (const surface of model.surfaces.values()) {
         if (surface.type !== "pad") continue;
         const v = surface.values;
@@ -478,15 +525,142 @@ function GeometryPreview({ cards }: { cards: SerpentCard[] }) {
     context.strokeStyle = "rgba(255,255,255,.24)";
     context.lineWidth = 1;
     context.setLineDash([3, 4]);
-    const zeroX = (0 - bounds.horizontalMin) / hSpan * width;
-    const zeroY = (bounds.verticalMax - 0) / vSpan * height;
-    if (zeroX >= 0 && zeroX <= width) {
-      context.beginPath(); context.moveTo(zeroX, 0); context.lineTo(zeroX, height); context.stroke();
+    const zeroX = toCanvas(0, 0).x;
+    const zeroY = toCanvas(0, 0).y;
+    if (zeroX >= plotLeft && zeroX <= plotLeft + plotWidth) {
+      context.beginPath(); context.moveTo(zeroX, plotTop); context.lineTo(zeroX, plotTop + plotHeight); context.stroke();
     }
-    if (zeroY >= 0 && zeroY <= height) {
-      context.beginPath(); context.moveTo(0, zeroY); context.lineTo(width, zeroY); context.stroke();
+    if (zeroY >= plotTop && zeroY <= plotTop + plotHeight) {
+      context.beginPath(); context.moveTo(plotLeft, zeroY); context.lineTo(plotLeft + plotWidth, zeroY); context.stroke();
     }
     context.setLineDash([]);
+
+    if (activeSurface) {
+      const v = activeSurface.values;
+      const dimensionColor = "#ffb15c";
+      const drawLabel = (x: number, y: number, text: string) => {
+        context.font = "600 10px ui-monospace, SFMono-Regular, Menlo, monospace";
+        const labelWidth = context.measureText(text).width + 14;
+        const left = Math.max(6, Math.min(width - labelWidth - 6, x - labelWidth / 2));
+        const top = Math.max(6, Math.min(height - 25, y - 22));
+        context.fillStyle = "rgba(5, 20, 17, .9)";
+        context.fillRect(left, top, labelWidth, 19);
+        context.strokeStyle = dimensionColor;
+        context.lineWidth = 1;
+        context.strokeRect(left + 0.5, top + 0.5, labelWidth - 1, 18);
+        context.fillStyle = "#ffe0b8";
+        context.fillText(text, left + 7, top + 13);
+      };
+      const drawDimension = (
+        start: { x: number; y: number },
+        end: { x: number; y: number },
+        label: string,
+      ) => {
+        context.strokeStyle = dimensionColor;
+        context.fillStyle = dimensionColor;
+        context.lineWidth = 1.5;
+        context.beginPath();
+        context.moveTo(start.x, start.y);
+        context.lineTo(end.x, end.y);
+        context.stroke();
+        for (const point of [start, end]) {
+          context.beginPath();
+          context.arc(point.x, point.y, 3, 0, Math.PI * 2);
+          context.fill();
+        }
+        drawLabel((start.x + end.x) / 2, (start.y + end.y) / 2, label);
+      };
+
+      context.save();
+      context.strokeStyle = dimensionColor;
+      context.lineWidth = 2;
+      context.setLineDash([6, 3]);
+
+      if (basis === "xy" && ["cyl", "cylz", "sqc"].includes(activeSurface.type)) {
+        const centerX = v[0] ?? 0;
+        const centerY = v[1] ?? 0;
+        const radius = v.at(-1) ?? 0;
+        const center = toCanvas(centerX, centerY);
+        const edge = toCanvas(centerX + radius, centerY);
+        if (activeSurface.type === "sqc") {
+          const topLeft = toCanvas(centerX - radius, centerY + radius);
+          const bottomRight = toCanvas(centerX + radius, centerY - radius);
+          context.strokeRect(topLeft.x, topLeft.y, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y);
+        } else {
+          context.beginPath();
+          context.ellipse(
+            center.x,
+            center.y,
+            radius * scale,
+            radius * scale,
+            0,
+            0,
+            Math.PI * 2,
+          );
+          context.stroke();
+        }
+        context.setLineDash([]);
+        drawDimension(center, edge, `${activeSurface.id} · ${activeSurface.type === "sqc" ? "반폭" : "R"} ${radius.toFixed(3)} cm`);
+      } else if (basis === "xy" && activeSurface.type === "pad") {
+        const angle = ((v[4] ?? 0) + (v[5] ?? 360)) / 2 * Math.PI / 180;
+        const centerX = v[0] ?? 0;
+        const centerY = v[1] ?? 0;
+        const inner = v[2] ?? 0;
+        const outer = v[3] ?? 0;
+        drawDimension(
+          toCanvas(centerX + Math.cos(angle) * inner, centerY + Math.sin(angle) * inner),
+          toCanvas(centerX + Math.cos(angle) * outer, centerY + Math.sin(angle) * outer),
+          `${activeSurface.id} · R ${inner.toFixed(2)}–${outer.toFixed(2)} cm`,
+        );
+      } else if (basis === "xy" && activeSurface.type === "sph") {
+        const fullRadius = v[3] ?? 0;
+        const sectionRadius = Math.sqrt(Math.max(0, fullRadius ** 2 - (slice - (v[2] ?? 0)) ** 2));
+        const center = toCanvas(v[0] ?? 0, v[1] ?? 0);
+        const edge = toCanvas((v[0] ?? 0) + sectionRadius, v[1] ?? 0);
+        context.beginPath();
+        context.ellipse(center.x, center.y, sectionRadius * scale, sectionRadius * scale, 0, 0, Math.PI * 2);
+        context.stroke();
+        context.setLineDash([]);
+        drawDimension(center, edge, `${activeSurface.id} · 단면 R ${sectionRadius.toFixed(3)} cm`);
+      } else {
+        const isVerticalPlane =
+          (basis === "xy" && activeSurface.type === "px") ||
+          (basis === "xz" && activeSurface.type === "px") ||
+          (basis === "yz" && activeSurface.type === "py");
+        const isHorizontalPlane =
+          (basis === "xy" && activeSurface.type === "py") ||
+          ((basis === "xz" || basis === "yz") && activeSurface.type === "pz");
+
+        if (isVerticalPlane) {
+          const coordinate = v[0] ?? 0;
+          const lineX = toCanvas(coordinate, 0).x;
+          context.beginPath(); context.moveTo(lineX, plotTop); context.lineTo(lineX, plotTop + plotHeight); context.stroke();
+          context.setLineDash([]);
+          drawDimension(toCanvas(0, 0), toCanvas(coordinate, 0), `${activeSurface.id} · d ${Math.abs(coordinate).toFixed(3)} cm`);
+        } else if (isHorizontalPlane) {
+          const coordinate = v[0] ?? 0;
+          const lineY = toCanvas(0, coordinate).y;
+          context.beginPath(); context.moveTo(plotLeft, lineY); context.lineTo(plotLeft + plotWidth, lineY); context.stroke();
+          context.setLineDash([]);
+          drawDimension(toCanvas(0, 0), toCanvas(0, coordinate), `${activeSurface.id} · d ${Math.abs(coordinate).toFixed(3)} cm`);
+        } else if ((basis === "xz" || basis === "yz") && ["cyl", "cylz"].includes(activeSurface.type)) {
+          const centerCoordinate = basis === "xz" ? (v[0] ?? 0) : (v[1] ?? 0);
+          const radius = v.at(-1) ?? 0;
+          const leftX = toCanvas(centerCoordinate - radius, 0).x;
+          const rightX = toCanvas(centerCoordinate + radius, 0).x;
+          context.beginPath();
+          context.moveTo(leftX, plotTop); context.lineTo(leftX, plotTop + plotHeight);
+          context.moveTo(rightX, plotTop); context.lineTo(rightX, plotTop + plotHeight);
+          context.stroke();
+          context.setLineDash([]);
+          drawDimension(toCanvas(centerCoordinate, 0), toCanvas(centerCoordinate + radius, 0), `${activeSurface.id} · R ${radius.toFixed(3)} cm`);
+        } else {
+          context.setLineDash([]);
+          drawLabel(width * 0.72, 44, `${activeSurface.id} · ${surfaceDetails(activeSurface).dimension}`);
+        }
+      }
+      context.restore();
+    }
 
     context.fillStyle = "rgba(4, 22, 18, .82)";
     context.fillRect(7, 7, 126, 30);
@@ -502,7 +676,7 @@ function GeometryPreview({ cards }: { cards: SerpentCard[] }) {
       13,
       31,
     );
-  }, [model, basis, slice, bounds, axisNames]);
+  }, [model, basis, slice, bounds, axisNames, activeSurface, expanded]);
 
   function surfaceDetails(surface: (typeof visibleSurfaces)[number]) {
     const v = surface.values;
@@ -566,20 +740,30 @@ function GeometryPreview({ cards }: { cards: SerpentCard[] }) {
             <span key={material.name}><i style={{ background: `rgb(${material.color.join(",")})` }} />{material.name}</span>
           ))}
         </div>
-        <div className="legend-head"><strong>{basis.toUpperCase()} 구분 경계</strong><span>{visibleSurfaces.length}</span></div>
+        <div className="legend-head">
+          <div>
+            <strong>{basis.toUpperCase()} 구분 경계</strong>
+            <small>경계를 선택하면 도면에 거리가 표시됩니다.</small>
+          </div>
+          <span>{visibleSurfaces.length}</span>
+        </div>
         <div className="dimension-table-head">
           <span>경계</span><span>형식</span><span>기준 위치</span><span>경계 치수 / 거리</span>
         </div>
         {visibleSurfaces.map((surface) => {
           const details = surfaceDetails(surface);
           return (
-          <div className="dimension-row" key={surface.id}>
+          <button
+            className={activeSurfaceId === surface.id ? "dimension-row active" : "dimension-row"}
+            key={surface.id}
+            onClick={() => setActiveSurfaceId(surface.id)}
+          >
             <span />
             <strong>{surface.id}</strong>
             <code>{surface.type}</code>
             <code>{details.position}</code>
             <code>{details.dimension}</code>
-          </div>
+          </button>
         )})}
         {!visibleSurfaces.length && <p className="no-preview">현재 단면과 교차하는 지원 표면이 없습니다.</p>}
       </div>
