@@ -35,6 +35,8 @@ button { color: inherit; }
   overflow: hidden;
   background: var(--paper);
 }
+.app-shell.font-scale-90 { zoom: .9; width: 111.112%; height: 111.112vh; }
+.app-shell.font-scale-110 { zoom: 1.1; width: 90.91%; height: 90.91vh; }
 
 .topbar {
   display: grid;
@@ -67,6 +69,12 @@ button { color: inherit; }
 .icon { display: inline-grid; min-width: 16px; place-items: center; font-size: 13px; }
 
 .top-actions { display: flex; align-items: center; gap: 7px; }
+.font-size-control { display: inline-flex; height: 30px; overflow: hidden; border: 1px solid var(--line); border-radius: 5px; background: white; }
+.font-size-control button { min-width: 29px; padding: 0 6px; border: 0; border-right: 1px solid var(--line); background: transparent; color: #50645c; font-size: 10px; font-weight: 800; cursor: pointer; }
+.font-size-control button:last-child { border-right: 0; }
+.font-size-control button:hover:not(:disabled) { background: var(--mint); color: var(--green); }
+.font-size-control button:disabled { color: #b6c0bb; cursor: default; }
+.font-size-control .font-size-value { min-width: 37px; color: var(--green); font-family: var(--font-geist-mono), monospace; font-size: 8px; }
 .button {
   height: 34px; padding: 0 13px; border-radius: 5px; border: 1px solid var(--line);
   display: inline-flex; align-items: center; gap: 5px; background: white;

@@ -590,6 +590,7 @@ export default function Home() {
   const [fileName, setFileName] = useState("pwr_pin.inp");
   const [selectedId, setSelectedId] = useState<string>("");
   const [view, setView] = useState<"builder" | "source" | "preview">("builder");
+  const [fontScale, setFontScale] = useState(100);
   const [showAdd, setShowAdd] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -605,6 +606,17 @@ export default function Home() {
   useEffect(() => {
     if (selected && selected.id !== selectedId) setSelectedId(selected.id);
   }, [selected, selectedId]);
+
+  useEffect(() => {
+    const savedScale = Number(window.localStorage.getItem("serpent-studio-font-scale"));
+    if ([90, 100, 110].includes(savedScale)) setFontScale(savedScale);
+  }, []);
+
+  function changeFontScale(nextScale: number) {
+    const boundedScale = Math.max(90, Math.min(110, nextScale));
+    setFontScale(boundedScale);
+    window.localStorage.setItem("serpent-studio-font-scale", String(boundedScale));
+  }
 
   function replaceCard(card: SerpentCard) {
     const next = cards.map((item) => (item.id === card.id ? card : item));
@@ -653,7 +665,7 @@ export default function Home() {
   }
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell font-scale-${fontScale}`}>
       <header className="topbar">
         <div className="brand">
           <div className="brand-mark">S</div>
@@ -673,6 +685,29 @@ export default function Home() {
           <span>편집 중</span>
         </div>
         <div className="top-actions">
+          <div className="font-size-control" role="group" aria-label="글씨 크기 조절">
+            <button
+              type="button"
+              aria-label="글씨 작게"
+              title="글씨 작게"
+              disabled={fontScale === 90}
+              onClick={() => changeFontScale(fontScale - 10)}
+            >A−</button>
+            <button
+              type="button"
+              className="font-size-value"
+              aria-label="기본 글씨 크기로 되돌리기"
+              title="기본 글씨 크기로 되돌리기"
+              onClick={() => changeFontScale(100)}
+            >{fontScale}%</button>
+            <button
+              type="button"
+              aria-label="글씨 크게"
+              title="글씨 크게"
+              disabled={fontScale === 110}
+              onClick={() => changeFontScale(fontScale + 10)}
+            >A+</button>
+          </div>
           <input
             ref={fileInput}
             type="file"
