@@ -589,9 +589,7 @@ export default function Home() {
   const [source, setSource] = useState(SAMPLE_INPUT);
   const [fileName, setFileName] = useState("pwr_pin.inp");
   const [selectedId, setSelectedId] = useState<string>("");
-  const [view, setView] = useState<"builder" | "source">("builder");
-  const [panel, setPanel] = useState<"preview" | "issues">("preview");
-  const [previewExpanded, setPreviewExpanded] = useState(false);
+  const [view, setView] = useState<"builder" | "source" | "preview">("builder");
   const [showAdd, setShowAdd] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -651,7 +649,7 @@ export default function Home() {
 
   function runValidation() {
     setLogOpen(true);
-    setPanel(issues.length ? "issues" : "preview");
+    setView("preview");
   }
 
   return (
@@ -694,7 +692,7 @@ export default function Home() {
         </div>
       </header>
 
-      <section className={previewExpanded ? "workspace preview-expanded" : "workspace"}>
+      <section className="workspace">
         <aside className="sidebar">
           <div className="sidebar-heading">
             <span>모델 구성</span>
@@ -752,12 +750,20 @@ export default function Home() {
             <button className={view === "source" ? "active" : ""} onClick={() => setView("source")}>
               원문 입력
             </button>
+            <button className={view === "preview" ? "active" : ""} onClick={() => setView("preview")}>
+              형상 미리보기
+            </button>
             <div className="undo-group">
               <button className="icon-button" title="샘플로 되돌리기" onClick={() => setSource(SAMPLE_INPUT)}>↶</button>
             </div>
           </div>
 
-          {view === "source" ? (
+          {view === "preview" ? (
+            <GeometryPreview
+              cards={cards}
+              selectedSurfaceId={selected?.kind === "surface" ? selectedData.name : ""}
+            />
+          ) : view === "source" ? (
             <div className="source-editor">
               <div className="source-toolbar">
                 <span>Serpent 2 input</span>
@@ -850,53 +856,31 @@ export default function Home() {
         </section>
 
         <aside className="inspector">
-          <div className="inspector-tabs">
-            <button className={panel === "preview" ? "active" : ""} onClick={() => setPanel("preview")}>형상 미리보기</button>
-            <button className={panel === "issues" ? "active" : ""} onClick={() => setPanel("issues")}>
-              검사 결과 <span>{issues.length}</span>
-            </button>
-            <button
-              className="panel-expand"
-              aria-label={previewExpanded ? "편집 화면과 함께 보기" : "평면도 넓게 보기"}
-              aria-pressed={previewExpanded}
-              title={previewExpanded ? "편집 화면과 함께 보기" : "평면도 넓게 보기"}
-              onClick={() => {
-                setPanel("preview");
-                setPreviewExpanded(!previewExpanded);
-              }}
-            >
-              {previewExpanded ? "⇥" : "⇤"}
-            </button>
+          <div className="inspector-heading">
+            <span>검사 결과</span>
+            <span>{issues.length}</span>
           </div>
-          {panel === "preview" ? (
-            <GeometryPreview
-              cards={cards}
-              expanded={previewExpanded}
-              selectedSurfaceId={selected?.kind === "surface" ? selectedData.name : ""}
-            />
-          ) : (
-            <div className="issues">
-              <div className="issue-summary">
-                <div className={errors ? "summary-icon error" : "summary-icon"}>{errors ? "!" : "✓"}</div>
-                <div>
-                  <strong>{errors ? "입력을 확인해 주세요" : "치명적인 오류가 없습니다"}</strong>
-                  <span>{errors} errors · {issues.length - errors} warnings</span>
-                </div>
+          <div className="issues">
+            <div className="issue-summary">
+              <div className={errors ? "summary-icon error" : "summary-icon"}>{errors ? "!" : "✓"}</div>
+              <div>
+                <strong>{errors ? "입력을 확인해 주세요" : "치명적인 오류가 없습니다"}</strong>
+                <span>{errors} errors · {issues.length - errors} warnings</span>
               </div>
-              {issues.length ? issues.map((issue, index) => (
-                <button
-                  className={`issue ${issue.level}`}
-                  key={`${issue.message}-${index}`}
-                  onClick={() => issue.cardId && setSelectedId(issue.cardId)}
-                >
-                  <span>{issue.level === "error" ? "×" : "!"}</span>
-                  <div><strong>{issue.level === "error" ? "오류" : "권장 사항"}</strong><p>{issue.message}</p></div>
-                </button>
-              )) : (
-                <div className="all-clear">모든 기본 검사를 통과했습니다.</div>
-              )}
             </div>
-          )}
+            {issues.length ? issues.map((issue, index) => (
+              <button
+                className={`issue ${issue.level}`}
+                key={`${issue.message}-${index}`}
+                onClick={() => issue.cardId && setSelectedId(issue.cardId)}
+              >
+                <span>{issue.level === "error" ? "×" : "!"}</span>
+                <div><strong>{issue.level === "error" ? "오류" : "권장 사항"}</strong><p>{issue.message}</p></div>
+              </button>
+            )) : (
+              <div className="all-clear">모든 기본 검사를 통과했습니다.</div>
+            )}
+          </div>
         </aside>
       </section>
 
@@ -907,7 +891,7 @@ export default function Home() {
       </footer>
 
       {logOpen && (
-        <div className={previewExpanded ? "console preview-expanded" : "console"}>
+        <div className="console">
           <div className="console-head"><span>입력 검사 콘솔</span><button onClick={() => setLogOpen(false)}>×</button></div>
           <pre>
 {`SERPENT Studio validator
@@ -926,11 +910,9 @@ ${errors ? `Found ${errors} error(s) and ${issues.length - errors} warning(s).` 
 
 function GeometryPreview({
   cards,
-  expanded,
   selectedSurfaceId,
 }: {
   cards: SerpentCard[];
-  expanded: boolean;
   selectedSurfaceId: string;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -1220,7 +1202,7 @@ function GeometryPreview({
       13,
       31,
     );
-  }, [model, basis, slice, bounds, axisNames, activeSurface, expanded]);
+  }, [model, basis, slice, bounds, axisNames, activeSurface]);
 
   function surfaceDetails(surface: (typeof visibleSurfaces)[number]) {
     const v = surface.values;
