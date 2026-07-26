@@ -439,13 +439,6 @@ function GeometryPreview({
     element.width = width * ratio;
     element.height = height * ratio;
     context.scale(ratio, ratio);
-    const resolution = 300;
-    const raster = document.createElement("canvas");
-    raster.width = resolution;
-    raster.height = resolution;
-    const rasterContext = raster.getContext("2d");
-    if (!rasterContext) return;
-    const image = rasterContext.createImageData(resolution, resolution);
     const hSpan = bounds.horizontalMax - bounds.horizontalMin;
     const vSpan = bounds.verticalMax - bounds.verticalMin;
     const scale = Math.min(width / hSpan, height / vSpan);
@@ -453,22 +446,31 @@ function GeometryPreview({
     const plotHeight = vSpan * scale;
     const plotLeft = (width - plotWidth) / 2;
     const plotTop = (height - plotHeight) / 2;
+    const pixelDensity = Math.min(ratio, 768 / Math.max(plotWidth, plotHeight));
+    const rasterWidth = Math.max(1, Math.round(plotWidth * pixelDensity));
+    const rasterHeight = Math.max(1, Math.round(plotHeight * pixelDensity));
+    const raster = document.createElement("canvas");
+    raster.width = rasterWidth;
+    raster.height = rasterHeight;
+    const rasterContext = raster.getContext("2d");
+    if (!rasterContext) return;
+    const image = rasterContext.createImageData(rasterWidth, rasterHeight);
     const toCanvas = (horizontal: number, vertical: number) => ({
       x: plotLeft + (horizontal - bounds.horizontalMin) * scale,
       y: plotTop + (bounds.verticalMax - vertical) * scale,
     });
 
-    for (let py = 0; py < resolution; py += 1) {
-      const vertical = bounds.verticalMax - (py + 0.5) / resolution * vSpan;
-      for (let px = 0; px < resolution; px += 1) {
-        const horizontal = bounds.horizontalMin + (px + 0.5) / resolution * hSpan;
+    for (let py = 0; py < rasterHeight; py += 1) {
+      const vertical = bounds.verticalMax - (py + 0.5) / rasterHeight * vSpan;
+      for (let px = 0; px < rasterWidth; px += 1) {
+        const horizontal = bounds.horizontalMin + (px + 0.5) / rasterWidth * hSpan;
         const [x, y, z] =
           basis === "xy" ? [horizontal, vertical, slice] :
           basis === "xz" ? [horizontal, slice, vertical] :
           [slice, horizontal, vertical];
         const materialName = materialAtPoint(model, x, y, z);
         const material = model.materials.get(materialName);
-        const offset = (py * resolution + px) * 4;
+        const offset = (py * rasterWidth + px) * 4;
         image.data[offset] = material?.color[0] ?? 4;
         image.data[offset + 1] = material?.color[1] ?? 16;
         image.data[offset + 2] = material?.color[2] ?? 13;
@@ -479,7 +481,8 @@ function GeometryPreview({
     rasterContext.putImageData(image, 0, 0);
     context.fillStyle = "#071714";
     context.fillRect(0, 0, width, height);
-    context.imageSmoothingEnabled = false;
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
     context.drawImage(raster, plotLeft, plotTop, plotWidth, plotHeight);
 
     if (basis === "xy") {
