@@ -165,7 +165,13 @@ export default function Home() {
           <span>편집 중</span>
         </div>
         <div className="top-actions">
-          <input ref={fileInput} type="file" accept=".inp,.txt,*" hidden onChange={openFile} />
+          <input
+            ref={fileInput}
+            type="file"
+            aria-label="SERPENT 입력문 선택"
+            hidden
+            onChange={openFile}
+          />
           <button className="button ghost" onClick={() => fileInput.current?.click()}>
             <Icon>↥</Icon> 열기
           </button>
