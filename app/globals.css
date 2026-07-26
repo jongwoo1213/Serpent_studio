@@ -162,6 +162,16 @@ button { color: inherit; }
   color: #d7e8e0; white-space: pre-wrap; font-family: var(--font-geist-mono), monospace;
   font-size: 9px; line-height: 1.55;
 }
+.current-values { grid-column: 1 / -1; overflow: hidden; border: 1px solid #d8e5df; border-radius: 6px; background: white; }
+.current-values-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 11px; border-bottom: 1px solid #e3ebe7; background: #eaf3ef; }
+.current-values-head span { color: var(--green); font-size: 9px; font-weight: 850; letter-spacing: .06em; text-transform: uppercase; }
+.current-values-head small { color: #77847e; font-size: 8px; }
+.meaning-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.meaning-item { min-width: 0; padding: 10px 11px; border-bottom: 1px solid #edf1ef; }
+.meaning-item:nth-child(odd) { border-right: 1px solid #edf1ef; }
+.meaning-item > span { display: block; color: #718078; font-size: 8px; font-weight: 800; }
+.meaning-item > code { display: block; margin-top: 4px; overflow: hidden; color: #17382f; font-size: 10px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+.meaning-item p { margin: 4px 0 0; color: #637069; font-size: 8px; line-height: 1.5; }
 .card-guide ul { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 20px; margin: 0; padding: 0 0 0 16px; color: #52635b; }
 .card-guide li { padding-left: 2px; font-size: 9px; line-height: 1.55; }
 .card-guide a { grid-column: 1 / -1; justify-self: start; color: var(--green); font-size: 9px; font-weight: 800; text-decoration: none; }
@@ -288,7 +298,7 @@ button { color: inherit; }
   .button.ghost { padding: 0 8px; }
   .console { left: 210px; right: 0; }
   .card-guide { grid-template-columns: 1fr; }
-  .card-guide ul, .card-guide a { grid-column: 1; }
+  .card-guide ul, .card-guide a, .current-values { grid-column: 1; }
 }
 
 @media (max-width: 760px) {
@@ -303,6 +313,8 @@ button { color: inherit; }
   .editor-pane { min-height: 720px; }
   .form-editor { padding: 24px 18px 50px; }
   .card-guide ul { grid-template-columns: 1fr; }
+  .meaning-grid { grid-template-columns: 1fr; }
+  .meaning-item:nth-child(odd) { border-right: 0; }
   .form-grid { grid-template-columns: 1fr; }
   .field.wide { grid-column: auto; }
   .status-center { display: none; }

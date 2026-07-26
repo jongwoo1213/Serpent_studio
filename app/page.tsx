@@ -343,6 +343,248 @@ function fieldHint(card: SerpentCard, key: string, data: Record<string, string>)
   return "";
 }
 
+type ValueMeaning = {
+  label: string;
+  value: string;
+  meaning: string;
+};
+
+function numericValues(value: string) {
+  return value.trim().split(/\s+/).map(Number).filter(Number.isFinite);
+}
+
+function boundaryMode(value: string) {
+  return { "1": "흡수(black) — 입자를 종료", "2": "반사(reflective) — 대칭 방향으로 반사", "3": "주기(periodic) — 반대편 경계로 이동" }[value] ?? "사용자 지정 경계조건";
+}
+
+function interpretOptionSequence(tokens: string[], definitions: Record<string, [number, string]>) {
+  const result: ValueMeaning[] = [];
+  let index = 0;
+  if (tokens[0] === "n" || tokens[0] === "p") {
+    result.push({ label: "입자 종류", value: tokens[0], meaning: tokens[0] === "n" ? "중성자" : "광자" });
+    index = 1;
+  }
+  while (index < tokens.length && result.length < 10) {
+    const option = tokens[index];
+    const definition = definitions[option];
+    if (!definition) {
+      result.push({ label: `인수 ${index + 1}`, value: option, meaning: "추가 위치 인수 또는 옵션 값" });
+      index += 1;
+      continue;
+    }
+    const [length, meaning] = definition;
+    const values = tokens.slice(index + 1, index + 1 + length);
+    result.push({ label: option, value: values.join(" ") || "—", meaning });
+    index += length + 1;
+  }
+  return result;
+}
+
+function interpretCardValues(card: SerpentCard, data: Record<string, string>): ValueMeaning[] {
+  const keyword = card.keyword.toLowerCase();
+  const option = data.name?.toLowerCase() ?? "";
+
+  if (card.kind === "surface") {
+    const values = numericValues(data.values ?? "");
+    const type = data.type?.toLowerCase();
+    const entries: ValueMeaning[] = [
+      { label: "표면 이름", value: data.name || "—", meaning: "셀과 검출기에서 이 경계를 참조할 때 사용하는 식별자" },
+      { label: "표면 형식", value: data.type || "—", meaning: surfaceParameterHint(data.type ?? "") },
+    ];
+    if (type === "px" || type === "py" || type === "pz") {
+      const axis = type.at(-1);
+      entries.push({ label: `${axis}₀`, value: `${values[0] ?? "—"} cm`, meaning: `${axis}축 원점에서 평면까지의 부호 있는 거리` });
+    } else if (type === "cyl" || type === "cylz") {
+      entries.push(
+        { label: "중심", value: `(${values[0] ?? "—"}, ${values[1] ?? "—"}) cm`, meaning: "XY 평면에서 원통 중심 좌표" },
+        { label: "반지름 r", value: `${values[2] ?? "—"} cm`, meaning: `직경은 ${Number.isFinite(values[2]) ? (values[2] * 2).toFixed(3) : "—"} cm` },
+      );
+      if (values.length >= 5) entries.push({ label: "축 방향 범위", value: `${values[3]} … ${values[4]} cm`, meaning: "절단 원통의 z 최소·최대 위치" });
+    } else if (type === "sph") {
+      entries.push(
+        { label: "중심", value: `(${values[0] ?? "—"}, ${values[1] ?? "—"}, ${values[2] ?? "—"}) cm`, meaning: "구 중심의 X·Y·Z 좌표" },
+        { label: "반지름 r", value: `${values[3] ?? "—"} cm`, meaning: `직경은 ${Number.isFinite(values[3]) ? (values[3] * 2).toFixed(3) : "—"} cm` },
+      );
+    } else if (type === "sqc") {
+      entries.push(
+        { label: "중심", value: `(${values[0] ?? "—"}, ${values[1] ?? "—"}) cm`, meaning: "정사각 기둥 중심 좌표" },
+        { label: "반폭 r", value: `${values[2] ?? "—"} cm`, meaning: `전체 폭은 ${Number.isFinite(values[2]) ? (values[2] * 2).toFixed(3) : "—"} cm` },
+      );
+      if (Number.isFinite(values[3])) entries.push({ label: "모서리 반경", value: `${values[3]} cm`, meaning: "둥근 모서리에 적용되는 반경" });
+    } else if (type === "pad") {
+      entries.push(
+        { label: "중심", value: `(${values[0] ?? "—"}, ${values[1] ?? "—"}) cm`, meaning: "원환 부채꼴의 중심" },
+        { label: "반경 구간", value: `${values[2] ?? "—"} … ${values[3] ?? "—"} cm`, meaning: `두께는 ${Number.isFinite(values[2]) && Number.isFinite(values[3]) ? Math.abs(values[3] - values[2]).toFixed(3) : "—"} cm` },
+        { label: "각도 구간", value: `${values[4] ?? "—"}° … ${values[5] ?? "—"}°`, meaning: `열림각은 ${Number.isFinite(values[4]) && Number.isFinite(values[5]) ? Math.abs(values[5] - values[4]).toFixed(3) : "—"}°` },
+      );
+    } else {
+      values.slice(0, 8).forEach((value, index) => entries.push({ label: `PARAM ${index + 1}`, value: String(value), meaning: `${data.type || "표면"} 형식의 ${index + 1}번째 인수` }));
+    }
+    return entries;
+  }
+
+  if (card.kind === "cell") {
+    const region = data.region ?? "";
+    const surfaces = region.match(/[+-]?[A-Za-z0-9_.]+/g) ?? [];
+    return [
+      { label: "셀 이름", value: data.name || "—", meaning: "src·det 카드 등에서 이 공간을 참조할 때 사용하는 이름" },
+      { label: "유니버스", value: data.universe || "—", meaning: data.universe === "0" ? "최상위(root) 유니버스" : `유니버스 ${data.universe} 내부에 배치` },
+      { label: "채움", value: data.material || "—", meaning: data.material === "outside" ? "계산 영역 바깥" : data.material === "void" ? "물질이 없는 빈 공간" : `물질 또는 fill 유니버스 '${data.material}' 사용` },
+      { label: "영역식", value: region || "—", meaning: region.includes(":") ? "합집합(:)을 포함한 Boolean 영역" : "나열된 모든 표면 조건의 교집합" },
+      ...surfaces.slice(0, 8).map((surface) => ({
+        label: `경계 ${surface.replace(/^[+-]/, "")}`,
+        value: surface.startsWith("-") ? "음의 면" : "양의 면",
+        meaning: surface.startsWith("-") ? "해당 표면 함수가 음수인 쪽(닫힌 표면은 일반적으로 내부)" : "해당 표면 함수가 양수인 쪽(닫힌 표면은 일반적으로 외부)",
+      })),
+    ];
+  }
+
+  if (card.kind === "material") {
+    const density = Number(data.density);
+    const composition = (data.composition ?? "").split("\n").map((line) => line.trim()).filter(Boolean);
+    const entries: ValueMeaning[] = [
+      { label: "물질 이름", value: data.name || "—", meaning: "cell 카드에서 이 조성을 참조하는 이름" },
+      {
+        label: "기준 밀도",
+        value: data.density || "—",
+        meaning: Number.isFinite(density) ? density < 0 ? `질량밀도 ${Math.abs(density)} g/cm³` : `원자밀도 ${density} atoms/(barn·cm)` : "밀도 값을 확인하세요.",
+      },
+      { label: "핵종 수", value: `${composition.length}개`, meaning: "현재 조성 블록에 입력된 핵종 또는 원소 항목 수" },
+    ];
+    const options = data.options?.trim();
+    if (options) entries.push({ label: "물질 옵션", value: options, meaning: "burn, tmp/tms, moder, rgb 등 물질에 적용되는 추가 설정" });
+    composition.slice(0, 7).forEach((line) => {
+      const [nuclide, fraction = ""] = line.split(/\s+/);
+      const amount = Number(fraction);
+      entries.push({
+        label: nuclide,
+        value: fraction || "—",
+        meaning: Number.isFinite(amount) ? amount < 0 ? `질량 기준 성분값 ${Math.abs(amount)}` : `원자 기준 성분값 ${amount}` : "핵종 조성 값",
+      });
+    });
+    if (composition.length > 7) entries.push({ label: "나머지 조성", value: `${composition.length - 7}개`, meaning: "아래 핵종 조성 입력란에서 전체 항목을 확인할 수 있습니다." });
+    return entries;
+  }
+
+  if (card.kind === "title") {
+    return [{ label: "계산 제목", value: data.values || "—", meaning: "실행 로그와 표준 결과 파일에 표시되는 사례 이름" }];
+  }
+
+  if (card.kind === "setting" && option === "pop") {
+    const values = (data.values ?? "").split(/\s+/).filter(Boolean);
+    return [
+      { label: "NPG", value: values[0] ?? "—", meaning: "한 세대에서 추적할 중성자 수" },
+      { label: "NGEN", value: values[1] ?? "—", meaning: "통계에 포함되는 활성 세대 수" },
+      { label: "NSKIP", value: values[2] ?? "—", meaning: "초기 소스 수렴을 위해 버리는 비활성 세대 수" },
+      ...(values[3] ? [{ label: "K₀", value: values[3], meaning: "초기 k-effective 추정값" }] : []),
+    ];
+  }
+
+  if (card.kind === "setting" && option === "nps") {
+    const values = (data.values ?? "").split(/\s+/).filter(Boolean);
+    return [
+      { label: "NP", value: values[0] ?? "—", meaning: "외부 소스 계산에서 추적할 전체 입자 이력 수" },
+      ...(values[1] ? [{ label: "BTCH", value: values[1], meaning: "통계 처리를 위한 배치 수" }] : []),
+      ...(values[2] ? [{ label: "TBI", value: values[2], meaning: "동적 모드에서 사용할 시간 빈 구조" }] : []),
+    ];
+  }
+
+  if (card.kind === "setting" && option === "bc") {
+    const values = (data.values ?? "").split(/\s+/).filter(Boolean);
+    if (values.length >= 3) {
+      return ["x", "y", "z"].map((axis, index) => ({ label: `${axis.toUpperCase()} 경계`, value: values[index] ?? "—", meaning: boundaryMode(values[index]) }));
+    }
+    return [
+      { label: "전체 방향 경계", value: values[0] ?? "—", meaning: boundaryMode(values[0]) },
+      ...(values[1] ? [{ label: "Albedo", value: values[1], meaning: "경계 통과 시 입자 통계 가중치에 곱하는 계수" }] : []),
+    ];
+  }
+
+  if (card.kind === "setting" && ["power", "powdens", "srcrate"].includes(option)) {
+    const [value = "—", material] = (data.values ?? "").split(/\s+/);
+    const units = option === "power" ? "W" : option === "powdens" ? "kW/g" : "particles/s";
+    return [
+      { label: option, value: `${value} ${units}`, meaning: "결과를 물리량으로 환산할 때 사용하는 정규화 기준" },
+      ...(material ? [{ label: "기준 물질", value: material, meaning: "정규화를 이 물질의 기여도에 한정" }] : []),
+    ];
+  }
+
+  if (card.kind === "setting") {
+    return (data.values ?? "").split(/\s+/).filter(Boolean).slice(0, 10).map((value, index) => ({
+      label: index === 0 ? `set ${option}` : `인수 ${index + 1}`,
+      value,
+      meaning: index === 0 ? "이 옵션의 첫 번째 설정값" : `set ${option} 옵션의 ${index + 1}번째 설정값`,
+    }));
+  }
+
+  if (card.kind === "source") {
+    const tokens = (data.values ?? "").split(/\s+/).filter(Boolean);
+    return [
+      { label: "소스 이름", value: data.name || "—", meaning: "소스 분포 식별자" },
+      ...interpretOptionSequence(tokens, {
+        sp: [3, "점 소스 또는 분포 중심의 X·Y·Z 좌표(cm)"],
+        sc: [1, "이 셀 내부에서 소스 위치를 샘플링"],
+        sm: [1, "이 물질 내부에서 소스 위치를 샘플링"],
+        su: [1, "이 유니버스 내부에서 소스 위치를 샘플링"],
+        ss: [1, "지정 표면에서 입자를 방출"],
+        sx: [2, "X 방향 샘플링 최소·최대 범위(cm)"],
+        sy: [2, "Y 방향 샘플링 최소·최대 범위(cm)"],
+        sz: [2, "Z 방향 샘플링 최소·최대 범위(cm)"],
+        srad: [2, "방사 방향 최소·최대 반경(cm)"],
+        se: [1, "단일 입자 에너지(MeV)"],
+        sd: [3, "입자 진행 방향 벡터"],
+      }),
+    ];
+  }
+
+  if (card.kind === "detector") {
+    const tokens = (data.values ?? "").split(/\s+/).filter(Boolean);
+    return [
+      { label: "검출기 이름", value: data.name || "—", meaning: "출력 변수 DET[NAME]에 사용되는 식별자" },
+      ...interpretOptionSequence(tokens, {
+        dc: [1, "이 셀에 집계 영역을 제한"],
+        dm: [1, "이 물질에 집계 영역을 제한"],
+        du: [1, "이 유니버스에 집계 영역을 제한"],
+        dl: [1, "이 격자에 집계 영역을 제한"],
+        ds: [2, "표면과 방향을 지정한 입자 전류 검출"],
+        de: [1, "결과에 적용할 에너지 격자"],
+        dr: [2, "MT 반응번호와 응답 물질"],
+        dv: [1, "검출기 체적 또는 결과 나눗셈 계수"],
+      }),
+    ];
+  }
+
+  if (card.kind === "plot" && keyword === "plot") {
+    const values = [data.name, ...(data.values ?? "").split(/\s+/)].filter(Boolean);
+    const plane = { "1": "YZ", "2": "XZ", "3": "XY" }[values[0]] ?? "사용자 지정";
+    return [
+      { label: "단면 방향", value: values[0] ?? "—", meaning: `${plane} 평면` },
+      { label: "이미지 크기", value: `${values[1] ?? "—"} × ${values[2] ?? "—"} px`, meaning: "Serpent가 생성할 PNG의 가로·세로 픽셀 수" },
+      ...(values[3] ? [{ label: "단면 위치", value: `${values[3]} cm`, meaning: "단면에 수직인 축의 좌표" }] : []),
+    ];
+  }
+
+  if (keyword === "pin") {
+    const tokens = (data.values ?? "").split(/\s+/).filter(Boolean);
+    const entries: ValueMeaning[] = [{ label: "핀 유니버스", value: data.name || "—", meaning: "격자나 fill에서 참조할 동심 원통 구조 이름" }];
+    for (let index = 0; index < tokens.length; index += 2) {
+      entries.push({
+        label: `층 ${index / 2 + 1}`,
+        value: tokens[index + 1] ? `${tokens[index]} · R ${tokens[index + 1]} cm` : tokens[index],
+        meaning: tokens[index + 1] ? "해당 물질층의 외부 반지름" : "반지름 제한 없이 이어지는 최외곽 물질",
+      });
+    }
+    return entries;
+  }
+
+  const values = [data.name, ...(data.values ?? "").split(/\s+/)].filter(Boolean);
+  return values.slice(0, 10).map((value, index) => ({
+    label: index === 0 ? "첫 번째 인수" : `인수 ${index + 1}`,
+    value,
+    meaning: `${card.keyword} 카드의 ${index + 1}번째 입력값`,
+  }));
+}
+
 export default function Home() {
   const [source, setSource] = useState(SAMPLE_INPUT);
   const [fileName, setFileName] = useState("pwr_pin.inp");
@@ -359,6 +601,7 @@ export default function Home() {
   const selected = cards.find((card) => card.id === selectedId) ?? cards.find((card) => card.kind === "surface") ?? cards[0];
   const selectedData = selected ? getCardData(selected) : {};
   const selectedGuide = selected ? guideForCard(selected, selectedData) : null;
+  const selectedMeanings = selected ? interpretCardValues(selected, selectedData) : [];
   const errors = issues.filter((issue) => issue.level === "error").length;
 
   useEffect(() => {
@@ -546,6 +789,21 @@ export default function Home() {
                     <p>{selectedGuide.description}</p>
                   </div>
                   <code>{selectedGuide.syntax}</code>
+                  <div className="current-values">
+                    <div className="current-values-head">
+                      <span>현재 입력값 해석</span>
+                      <small>입력값을 수정하면 설명도 즉시 갱신됩니다.</small>
+                    </div>
+                    <div className="meaning-grid">
+                      {selectedMeanings.map((item, index) => (
+                        <div className="meaning-item" key={`${item.label}-${item.value}-${index}`}>
+                          <span>{item.label}</span>
+                          <code>{item.value}</code>
+                          <p>{item.meaning}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                   <ul>
                     {selectedGuide.tips.map((tip) => <li key={tip}>{tip}</li>)}
                   </ul>
