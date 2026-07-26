@@ -167,17 +167,20 @@ button { color: inherit; }
 .preview-panel, .issues { min-height: 0; flex: 1; overflow: auto; }
 .preview-toolbar { height: 42px; padding: 0 12px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--line); background: white; }
 .preview-toolbar > span { margin-left: auto; color: #7a8781; font-family: monospace; font-size: 9px; }
+.preview-toolbar > .dimension-unit {
+  margin-left: 0; padding: 3px 6px; border: 1px solid var(--line);
+  border-radius: 4px; background: #f3f6f4; color: var(--green); font-weight: 700;
+}
 .segmented { display: flex; padding: 2px; border: 1px solid var(--line); border-radius: 4px; }
 .segmented button { padding: 3px 8px; border: 0; border-radius: 3px; background: transparent; color: #85918b; font-size: 8px; cursor: pointer; }
 .segmented button.active { background: var(--green); color: white; }
 
-.canvas-wrap { height: 330px; position: relative; background: #071714; overflow: hidden; }
+.canvas-wrap { height: 360px; position: relative; background: #071714; overflow: hidden; }
 .canvas-wrap canvas { display: block; width: 100%; height: 100%; }
 .axis { position: absolute; color: #91b9ac; font-family: monospace; font-size: 8px; }
 .axis.x { right: 12px; top: calc(50% + 5px); }
 .axis.y { left: calc(50% + 7px); top: 9px; }
-.zoom { position: absolute; right: 9px; bottom: 10px; width: 24px; display: grid; place-items: center; gap: 4px; padding: 5px 0; border: 1px solid rgba(255,255,255,.18); border-radius: 5px; background: rgba(8,29,24,.75); color: white; font-size: 11px; }
-.zoom span { width: 12px; border-top: 1px solid rgba(255,255,255,.18); }
+.origin-label { position: absolute; left: calc(50% + 6px); top: calc(50% + 5px); color: rgba(222,241,233,.64); font-family: monospace; font-size: 7px; pointer-events: none; }
 
 .legend { padding: 15px 17px; background: white; }
 .legend-head { display: flex; justify-content: space-between; padding-bottom: 10px; border-bottom: 1px solid var(--line-soft); font-size: 9px; text-transform: uppercase; letter-spacing: .08em; }
@@ -188,6 +191,18 @@ button { color: inherit; }
 .legend-item strong { font-size: 9px; }
 .legend-item small { margin-top: 2px; color: #8c9791; font-size: 8px; }
 .legend-item code { color: #67736d; font-size: 8px; }
+.dimension-table-head {
+  display: grid; grid-template-columns: 1fr 42px 88px 92px; gap: 7px;
+  padding: 8px 0 6px 17px; border-bottom: 1px solid var(--line-soft);
+  color: #89938e; font-size: 7px; font-weight: 700; text-transform: uppercase;
+}
+.dimension-row {
+  display: grid; grid-template-columns: 9px minmax(45px, 1fr) 42px 88px 92px;
+  gap: 7px; align-items: center; padding: 9px 0; border-bottom: 1px solid #eef1ef;
+}
+.dimension-row > span { width: 8px; height: 8px; border-radius: 2px; }
+.dimension-row strong { overflow: hidden; text-overflow: ellipsis; font-family: monospace; font-size: 9px; }
+.dimension-row code { color: #65716b; font-size: 8px; white-space: nowrap; }
 .preview-note, .no-preview { margin: 0 16px 15px; color: #7e8b84; font-size: 9px; line-height: 1.5; }
 
 .issues { padding: 16px; background: #f8faf8; }

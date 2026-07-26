@@ -358,10 +358,24 @@ ${errors ? `Found ${errors} error(s) and ${issues.length - errors} warning(s).` 
 
 function GeometryPreview({ cards }: { cards: SerpentCard[] }) {
   const canvas = useRef<HTMLCanvasElement>(null);
-  const surfaces = cards
-    .filter((card) => card.kind === "surface")
-    .map((card) => ({ card, data: getCardData(card) }))
-    .filter(({ data }) => "type" in data && ["cyl", "sqc"].includes(data.type));
+  const boundaries = useMemo(() => {
+    return cards
+      .filter((card) => card.kind === "surface")
+      .map((card) => {
+        const data = getCardData(card);
+        const values = data.values.split(/\s+/).map(Number);
+        const distance = values.at(-1) ?? 0;
+        return {
+          card,
+          name: data.name,
+          type: data.type,
+          distance,
+          centerX: values.length >= 3 ? values[0] ?? 0 : 0,
+          centerY: values.length >= 3 ? values[1] ?? 0 : 0,
+        };
+      })
+      .filter((boundary) => ["cyl", "sqc"].includes(boundary.type) && Number.isFinite(boundary.distance));
+  }, [cards]);
 
   useEffect(() => {
     const element = canvas.current;
@@ -389,18 +403,17 @@ function GeometryPreview({ cards }: { cards: SerpentCard[] }) {
 
     const cx = width / 2;
     const cy = height / 2;
-    const scale = Math.min(width, height) * 0.33;
-    const circles = surfaces
-      .filter(({ data }) => "type" in data && data.type === "cyl")
-      .map(({ data }) => Number(("values" in data ? data.values : "").split(/\s+/).at(-1)))
-      .filter(Number.isFinite)
-      .sort((a, b) => b - a);
-    const maxRadius = circles[0] || 1;
+    const scale = Math.min(width, height) * 0.28;
+    const maxDistance = Math.max(...boundaries.map((boundary) => boundary.distance), 1);
     const palette = ["#437d75", "#d9e3d6", "#c58b54", "#eec88c"];
+    const circles = boundaries
+      .filter((boundary) => boundary.type === "cyl")
+      .sort((a, b) => b.distance - a.distance);
 
-    circles.forEach((radius, index) => {
+    circles.forEach((boundary, index) => {
+      const radius = (boundary.distance / maxDistance) * scale;
       context.beginPath();
-      context.arc(cx, cy, (radius / maxRadius) * scale, 0, Math.PI * 2);
+      context.arc(cx, cy, radius, 0, Math.PI * 2);
       context.fillStyle = palette[index % palette.length] ?? "#437d75";
       context.fill();
       context.strokeStyle = "#102c27";
@@ -408,47 +421,104 @@ function GeometryPreview({ cards }: { cards: SerpentCard[] }) {
       context.stroke();
     });
 
-    const square = surfaces.find(({ data }) => "type" in data && data.type === "sqc");
-    if (square && "values" in square.data) {
-      const half = Number(square.data.values.split(/\s+/).at(-1)) || maxRadius * 1.25;
-      const size = (half / maxRadius) * scale * 2;
+    const squares = boundaries.filter((boundary) => boundary.type === "sqc");
+    squares.forEach((boundary) => {
+      const half = (boundary.distance / maxDistance) * scale;
+      const size = half * 2;
       context.strokeStyle = "#91c9b7";
       context.lineWidth = 2;
       context.strokeRect(cx - size / 2, cy - size / 2, size, size);
-    }
+    });
 
     context.strokeStyle = "rgba(255,255,255,.35)";
     context.setLineDash([3, 4]);
     context.beginPath(); context.moveTo(cx, 24); context.lineTo(cx, height - 24); context.stroke();
     context.beginPath(); context.moveTo(24, cy); context.lineTo(width - 24, cy); context.stroke();
     context.setLineDash([]);
-  }, [cards, surfaces]);
+
+    const drawArrow = (x: number, y: number, angle: number, color: string) => {
+      context.save();
+      context.translate(x, y);
+      context.rotate(angle);
+      context.beginPath();
+      context.moveTo(0, 0);
+      context.lineTo(-6, -3);
+      context.lineTo(-6, 3);
+      context.closePath();
+      context.fillStyle = color;
+      context.fill();
+      context.restore();
+    };
+
+    [...boundaries]
+      .sort((a, b) => a.distance - b.distance)
+      .forEach((boundary, index) => {
+        const angle = boundary.type === "sqc"
+          ? -Math.PI / 2
+          : -0.22 - index * 0.28;
+        const length = (boundary.distance / maxDistance) * scale;
+        const endX = cx + Math.cos(angle) * length;
+        const endY = cy + Math.sin(angle) * length;
+        const color = index % 2 ? "#f4d399" : "#b7e0d1";
+
+        context.strokeStyle = color;
+        context.fillStyle = color;
+        context.lineWidth = 1;
+        context.setLineDash([2, 2]);
+        context.beginPath();
+        context.moveTo(cx, cy);
+        context.lineTo(endX, endY);
+        context.stroke();
+        context.setLineDash([]);
+        drawArrow(endX, endY, angle, color);
+
+        const label = `${boundary.name}  ${boundary.distance.toFixed(4)} cm`;
+        context.font = "9px ui-monospace, SFMono-Regular, Menlo, monospace";
+        const labelWidth = context.measureText(label).width + 8;
+        const labelX = Math.min(Math.max(endX + 7, 5), width - labelWidth - 5);
+        const labelY = Math.min(Math.max(endY - 13, 14), height - 8);
+        context.fillStyle = "rgba(4, 22, 18, .86)";
+        context.fillRect(labelX - 3, labelY - 9, labelWidth, 13);
+        context.fillStyle = color;
+        context.fillText(label, labelX, labelY);
+      });
+
+    context.fillStyle = "#eff8f4";
+    context.beginPath();
+    context.arc(cx, cy, 2.5, 0, Math.PI * 2);
+    context.fill();
+  }, [boundaries]);
 
   return (
     <div className="preview-panel">
       <div className="preview-toolbar">
         <div className="segmented"><button className="active">XY</button><button>XZ</button><button>YZ</button></div>
         <span>z = 0.000 cm</span>
-        <button className="icon-button" title="뷰 맞춤">⊙</button>
+        <span className="dimension-unit">단위 cm</span>
       </div>
       <div className="canvas-wrap">
-        <canvas ref={canvas} aria-label="Serpent 형상 2D 미리보기" />
+        <canvas ref={canvas} aria-label="경계 치수가 표시된 Serpent XY 평면도" />
         <div className="axis x">X</div>
         <div className="axis y">Y</div>
-        <div className="zoom">＋<span />−</div>
+        <div className="origin-label">원점 (0, 0)</div>
       </div>
       <div className="legend">
-        <div className="legend-head"><strong>표면 레이어</strong><span>{surfaces.length}</span></div>
-        {surfaces.map(({ card, data }, index) => (
-          <div className="legend-item" key={card.id}>
+        <div className="legend-head"><strong>구분 경계 치수</strong><span>{boundaries.length}</span></div>
+        <div className="dimension-table-head">
+          <span>경계</span><span>형식</span><span>중심 → 경계</span><span>전체 치수</span>
+        </div>
+        {boundaries.map((boundary, index) => (
+          <div className="dimension-row" key={boundary.card.id}>
             <span style={{ background: ["#437d75", "#d9e3d6", "#c58b54", "#eec88c"][index % 4] }} />
-            <div><strong>{data.name}</strong><small>{"type" in data ? data.type : card.keyword}</small></div>
-            <code>{"values" in data ? data.values.split(/\s+/).at(-1) : ""}</code>
+            <strong>{boundary.name}</strong>
+            <code>{boundary.type}</code>
+            <code>{boundary.distance.toFixed(4)} cm</code>
+            <code>{boundary.type === "cyl" ? "Ø" : "W"} {(boundary.distance * 2).toFixed(4)} cm</code>
           </div>
         ))}
-        {!surfaces.length && <p className="no-preview">cyl 또는 sqc 표면을 추가하면 여기에 표시됩니다.</p>}
+        {!boundaries.length && <p className="no-preview">cyl 또는 sqc 표면을 추가하면 치수 평면도가 표시됩니다.</p>}
       </div>
-      <p className="preview-note">빠른 개념 미리보기입니다. 최종 형상은 Serpent의 gplot 결과로 확인하세요.</p>
+      <p className="preview-note">점선 치수선은 각 표면 중심에서 구분 경계까지의 거리입니다. Ø는 원형 직경, W는 사각형 전체 폭입니다.</p>
     </div>
   );
 }
