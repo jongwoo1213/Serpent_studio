@@ -60,6 +60,13 @@ function tokens(line: string) {
   return stripComment(line).match(/"[^"]*"|\S+/g) ?? [];
 }
 
+function primaryLine(card: SerpentCard) {
+  return card.lines.find((line) => {
+    const first = tokens(line)[0]?.toLowerCase();
+    return first === card.keyword;
+  }) ?? card.lines.find((line) => stripComment(line)) ?? "";
+}
+
 function kindFor(keyword: string): CardKind {
   if (keyword === "surf") return "surface";
   if (keyword === "cell") return "cell";
@@ -148,7 +155,7 @@ export function serializeCards(cards: SerpentCard[]) {
 }
 
 export function getCardData(card: SerpentCard): Record<string, string> {
-  const content = card.lines.find((line) => stripComment(line)) ?? "";
+  const content = primaryLine(card);
   const parts = tokens(content);
   const comment = content.includes("%") ? content.slice(content.indexOf("%") + 1).trim() : "";
 
@@ -213,10 +220,9 @@ export function updateCard(
     primary = `${card.keyword} ${data.name} ${data.values}`.trim();
   }
 
-  const leading = card.lines.filter((line) => {
-    const clean = stripComment(line);
-    return !clean || line.trim().startsWith("%");
-  });
+  const originalPrimary = primaryLine(card);
+  const primaryIndex = card.lines.indexOf(originalPrimary);
+  const leading = primaryIndex > 0 ? card.lines.slice(0, primaryIndex) : [];
   const lines = [...leading, withComment(primary, data.comment), ...continuation];
   return { ...card, label: labelFor(card.keyword, primary), lines };
 }
@@ -290,6 +296,185 @@ export function validateSerpentInput(cards: SerpentCard[]): ValidationIssue[] {
     issues.push({ level: "warning", message: "형상 확인을 위한 gplot 카드를 추가해 보세요." });
   }
   return issues;
+}
+
+export type GeometrySurface = {
+  id: string;
+  type: string;
+  values: number[];
+};
+
+export type GeometryCell = {
+  id: string;
+  material: string;
+  terms: number[];
+};
+
+export type GeometryMaterial = {
+  name: string;
+  color: [number, number, number];
+};
+
+export type GeometryModel = {
+  surfaces: Map<string, GeometrySurface>;
+  cells: GeometryCell[];
+  materials: Map<string, GeometryMaterial>;
+};
+
+export type PlotBasis = "xy" | "xz" | "yz";
+
+export type PlotBounds = {
+  horizontalMin: number;
+  horizontalMax: number;
+  verticalMin: number;
+  verticalMax: number;
+};
+
+export function parseGeometryModel(cards: SerpentCard[]): GeometryModel {
+  const surfaces = new Map<string, GeometrySurface>();
+  const materials = new Map<string, GeometryMaterial>();
+  const cells: GeometryCell[] = [];
+
+  for (const card of cards) {
+    const parts = tokens(primaryLine(card));
+    if (card.kind === "surface" && parts.length >= 3) {
+      surfaces.set(parts[1], {
+        id: parts[1],
+        type: parts[2].toLowerCase(),
+        values: parts.slice(3).map(Number),
+      });
+    }
+
+    if (card.kind === "material" && parts.length >= 3) {
+      const rgbIndex = parts.findIndex((part) => part.toLowerCase() === "rgb");
+      const rgb = rgbIndex >= 0
+        ? parts.slice(rgbIndex + 1, rgbIndex + 4).map(Number)
+        : [126, 145, 137];
+      materials.set(parts[1], {
+        name: parts[1],
+        color: [
+          Number.isFinite(rgb[0]) ? rgb[0] : 126,
+          Number.isFinite(rgb[1]) ? rgb[1] : 145,
+          Number.isFinite(rgb[2]) ? rgb[2] : 137,
+        ],
+      });
+    }
+
+    if (card.kind === "cell" && parts.length >= 5) {
+      const terms = parts
+        .slice(4)
+        .map((part) => Number(part.replace(/[():]/g, "")))
+        .filter((value) => Number.isInteger(value) && value !== 0);
+      cells.push({ id: parts[1], material: parts[3], terms });
+    }
+  }
+
+  return { surfaces, cells, materials };
+}
+
+function angleInRange(angle: number, start: number, end: number) {
+  const normalized = ((angle % 360) + 360) % 360;
+  const a = ((start % 360) + 360) % 360;
+  const b = ((end % 360) + 360) % 360;
+  return a <= b ? normalized >= a && normalized <= b : normalized >= a || normalized <= b;
+}
+
+function surfaceValue(surface: GeometrySurface, x: number, y: number, z: number) {
+  const v = surface.values;
+  if (surface.type === "cyl" || surface.type === "cylz") {
+    return Math.hypot(x - (v[0] ?? 0), y - (v[1] ?? 0)) - (v.at(-1) ?? 0);
+  }
+  if (surface.type === "sqc") {
+    return Math.max(Math.abs(x - (v[0] ?? 0)), Math.abs(y - (v[1] ?? 0))) - (v.at(-1) ?? 0);
+  }
+  if (surface.type === "sph") {
+    return Math.hypot(
+      x - (v[0] ?? 0),
+      y - (v[1] ?? 0),
+      z - (v[2] ?? 0),
+    ) - (v[3] ?? 0);
+  }
+  if (surface.type === "px") return x - (v[0] ?? 0);
+  if (surface.type === "py") return y - (v[0] ?? 0);
+  if (surface.type === "pz") return z - (v[0] ?? 0);
+  if (surface.type === "pad") {
+    const dx = x - (v[0] ?? 0);
+    const dy = y - (v[1] ?? 0);
+    const radius = Math.hypot(dx, dy);
+    const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+    const inside =
+      radius >= (v[2] ?? 0) &&
+      radius <= (v[3] ?? 0) &&
+      angleInRange(angle, v[4] ?? 0, v[5] ?? 360);
+    return inside ? -1 : 1;
+  }
+  return 1;
+}
+
+function cellContains(
+  cell: GeometryCell,
+  surfaces: Map<string, GeometrySurface>,
+  x: number,
+  y: number,
+  z: number,
+) {
+  return cell.terms.every((term) => {
+    const surface = surfaces.get(String(Math.abs(term)));
+    if (!surface) return false;
+    const value = surfaceValue(surface, x, y, z);
+    return term < 0 ? value < 0 : value > 0;
+  });
+}
+
+export function materialAtPoint(model: GeometryModel, x: number, y: number, z: number) {
+  for (const cell of model.cells) {
+    if (cell.material === "outside") continue;
+    if (cellContains(cell, model.surfaces, x, y, z)) return cell.material;
+  }
+  return "";
+}
+
+export function geometryPlotBounds(model: GeometryModel, basis: PlotBasis): PlotBounds {
+  const xValues: number[] = [];
+  const yValues: number[] = [];
+  const zValues: number[] = [];
+
+  for (const surface of model.surfaces.values()) {
+    const v = surface.values;
+    if (["cyl", "cylz", "pad", "sqc"].includes(surface.type)) {
+      const radius = surface.type === "pad" ? (v[3] ?? 0) : (v.at(-1) ?? 0);
+      xValues.push((v[0] ?? 0) - radius, (v[0] ?? 0) + radius);
+      yValues.push((v[1] ?? 0) - radius, (v[1] ?? 0) + radius);
+    }
+    if (surface.type === "sph") {
+      const radius = v[3] ?? 0;
+      xValues.push((v[0] ?? 0) - radius, (v[0] ?? 0) + radius);
+      yValues.push((v[1] ?? 0) - radius, (v[1] ?? 0) + radius);
+      zValues.push((v[2] ?? 0) - radius, (v[2] ?? 0) + radius);
+    }
+    if (surface.type === "px") xValues.push(v[0] ?? 0);
+    if (surface.type === "py") yValues.push(v[0] ?? 0);
+    if (surface.type === "pz") zValues.push(v[0] ?? 0);
+  }
+
+  const range = (values: number[], fallback = 1) => {
+    if (!values.length) return [-fallback, fallback] as const;
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const padding = Math.max((max - min) * 0.05, 0.1);
+    return [min - padding, max + padding] as const;
+  };
+  const [xMin, xMax] = range(xValues);
+  const [yMin, yMax] = range(yValues);
+  const [zMin, zMax] = range(zValues, Math.max(Math.abs(xMin), Math.abs(xMax)));
+
+  if (basis === "xy") {
+    return { horizontalMin: xMin, horizontalMax: xMax, verticalMin: yMin, verticalMax: yMax };
+  }
+  if (basis === "xz") {
+    return { horizontalMin: xMin, horizontalMax: xMax, verticalMin: zMin, verticalMax: zMax };
+  }
+  return { horizontalMin: yMin, horizontalMax: yMax, verticalMin: zMin, verticalMax: zMax };
 }
 
 export const SAMPLE_INPUT = `% ================================================================

@@ -10,7 +10,11 @@ import {
 import {
   CardKind,
   getCardData,
+  geometryPlotBounds,
+  materialAtPoint,
   parseSerpentInput,
+  parseGeometryModel,
+  PlotBasis,
   SAMPLE_INPUT,
   serializeCards,
   SerpentCard,
@@ -358,24 +362,25 @@ ${errors ? `Found ${errors} error(s) and ${issues.length - errors} warning(s).` 
 
 function GeometryPreview({ cards }: { cards: SerpentCard[] }) {
   const canvas = useRef<HTMLCanvasElement>(null);
-  const boundaries = useMemo(() => {
-    return cards
-      .filter((card) => card.kind === "surface")
-      .map((card) => {
-        const data = getCardData(card);
-        const values = data.values.split(/\s+/).map(Number);
-        const distance = values.at(-1) ?? 0;
-        return {
-          card,
-          name: data.name,
-          type: data.type,
-          distance,
-          centerX: values.length >= 3 ? values[0] ?? 0 : 0,
-          centerY: values.length >= 3 ? values[1] ?? 0 : 0,
-        };
-      })
-      .filter((boundary) => ["cyl", "sqc"].includes(boundary.type) && Number.isFinite(boundary.distance));
-  }, [cards]);
+  const [basis, setBasis] = useState<PlotBasis>("xy");
+  const [slice, setSlice] = useState(0);
+  const model = useMemo(() => parseGeometryModel(cards), [cards]);
+  const bounds = useMemo(() => geometryPlotBounds(model, basis), [model, basis]);
+  const axisNames = basis === "xy" ? ["X", "Y", "z"] : basis === "xz" ? ["X", "Z", "y"] : ["Y", "Z", "x"];
+
+  const visibleSurfaces = useMemo(() => {
+    return [...model.surfaces.values()].filter((surface) => {
+      if (basis === "xy") {
+        if (["cyl", "cylz", "sqc", "pad", "px", "py"].includes(surface.type)) return true;
+        if (surface.type === "sph") {
+          return Math.abs(slice - (surface.values[2] ?? 0)) <= (surface.values[3] ?? 0);
+        }
+        return false;
+      }
+      if (basis === "xz") return ["cyl", "cylz", "pad", "px", "pz", "sph"].includes(surface.type);
+      return ["cyl", "cylz", "pad", "py", "pz", "sph"].includes(surface.type);
+    });
+  }, [model, basis, slice]);
 
   useEffect(() => {
     const element = canvas.current;
@@ -388,137 +393,191 @@ function GeometryPreview({ cards }: { cards: SerpentCard[] }) {
     element.width = width * ratio;
     element.height = height * ratio;
     context.scale(ratio, ratio);
-    context.clearRect(0, 0, width, height);
-    context.fillStyle = "#071714";
-    context.fillRect(0, 0, width, height);
+    const resolution = 300;
+    const raster = document.createElement("canvas");
+    raster.width = resolution;
+    raster.height = resolution;
+    const rasterContext = raster.getContext("2d");
+    if (!rasterContext) return;
+    const image = rasterContext.createImageData(resolution, resolution);
+    const hSpan = bounds.horizontalMax - bounds.horizontalMin;
+    const vSpan = bounds.verticalMax - bounds.verticalMin;
 
-    context.strokeStyle = "rgba(105, 166, 149, .12)";
+    for (let py = 0; py < resolution; py += 1) {
+      const vertical = bounds.verticalMax - (py + 0.5) / resolution * vSpan;
+      for (let px = 0; px < resolution; px += 1) {
+        const horizontal = bounds.horizontalMin + (px + 0.5) / resolution * hSpan;
+        const [x, y, z] =
+          basis === "xy" ? [horizontal, vertical, slice] :
+          basis === "xz" ? [horizontal, slice, vertical] :
+          [slice, horizontal, vertical];
+        const materialName = materialAtPoint(model, x, y, z);
+        const material = model.materials.get(materialName);
+        const offset = (py * resolution + px) * 4;
+        image.data[offset] = material?.color[0] ?? 4;
+        image.data[offset + 1] = material?.color[1] ?? 16;
+        image.data[offset + 2] = material?.color[2] ?? 13;
+        image.data[offset + 3] = 255;
+      }
+    }
+
+    rasterContext.putImageData(image, 0, 0);
+    context.imageSmoothingEnabled = false;
+    context.drawImage(raster, 0, 0, width, height);
+
+    if (basis === "xy") {
+      const toCanvas = (x: number, y: number) => ({
+        x: (x - bounds.horizontalMin) / hSpan * width,
+        y: (bounds.verticalMax - y) / vSpan * height,
+      });
+      for (const surface of model.surfaces.values()) {
+        if (surface.type !== "pad") continue;
+        const v = surface.values;
+        const start = v[4] ?? 0;
+        const end = v[5] ?? 360;
+        const middle = (start + end) / 2 * Math.PI / 180;
+        const middleRadius = ((v[2] ?? 0) + (v[3] ?? 0)) / 2;
+        const sampleX = (v[0] ?? 0) + Math.cos(middle) * middleRadius;
+        const sampleY = (v[1] ?? 0) + Math.sin(middle) * middleRadius;
+        const materialName = materialAtPoint(model, sampleX, sampleY, slice);
+        if (!materialName) continue;
+        const color = model.materials.get(materialName)?.color ?? [234, 84, 85];
+        const points: { x: number; y: number }[] = [];
+        const segments = 30;
+        for (let index = 0; index <= segments; index += 1) {
+          const angle = (start + (end - start) * index / segments) * Math.PI / 180;
+          points.push(toCanvas(
+            (v[0] ?? 0) + Math.cos(angle) * (v[3] ?? 0),
+            (v[1] ?? 0) + Math.sin(angle) * (v[3] ?? 0),
+          ));
+        }
+        for (let index = segments; index >= 0; index -= 1) {
+          const angle = (start + (end - start) * index / segments) * Math.PI / 180;
+          points.push(toCanvas(
+            (v[0] ?? 0) + Math.cos(angle) * (v[2] ?? 0),
+            (v[1] ?? 0) + Math.sin(angle) * (v[2] ?? 0),
+          ));
+        }
+        context.beginPath();
+        points.forEach((point, index) => index ? context.lineTo(point.x, point.y) : context.moveTo(point.x, point.y));
+        context.closePath();
+        context.fillStyle = `rgb(${color.join(",")})`;
+        context.fill();
+        context.strokeStyle = "rgba(28, 48, 42, .65)";
+        context.lineWidth = 0.6;
+        context.stroke();
+      }
+    }
+
+    context.strokeStyle = "rgba(255,255,255,.24)";
     context.lineWidth = 1;
-    for (let x = 18; x < width; x += 22) {
-      context.beginPath(); context.moveTo(x, 0); context.lineTo(x, height); context.stroke();
-    }
-    for (let y = 18; y < height; y += 22) {
-      context.beginPath(); context.moveTo(0, y); context.lineTo(width, y); context.stroke();
-    }
-
-    const cx = width / 2;
-    const cy = height / 2;
-    const scale = Math.min(width, height) * 0.28;
-    const maxDistance = Math.max(...boundaries.map((boundary) => boundary.distance), 1);
-    const palette = ["#437d75", "#d9e3d6", "#c58b54", "#eec88c"];
-    const circles = boundaries
-      .filter((boundary) => boundary.type === "cyl")
-      .sort((a, b) => b.distance - a.distance);
-
-    circles.forEach((boundary, index) => {
-      const radius = (boundary.distance / maxDistance) * scale;
-      context.beginPath();
-      context.arc(cx, cy, radius, 0, Math.PI * 2);
-      context.fillStyle = palette[index % palette.length] ?? "#437d75";
-      context.fill();
-      context.strokeStyle = "#102c27";
-      context.lineWidth = 1.5;
-      context.stroke();
-    });
-
-    const squares = boundaries.filter((boundary) => boundary.type === "sqc");
-    squares.forEach((boundary) => {
-      const half = (boundary.distance / maxDistance) * scale;
-      const size = half * 2;
-      context.strokeStyle = "#91c9b7";
-      context.lineWidth = 2;
-      context.strokeRect(cx - size / 2, cy - size / 2, size, size);
-    });
-
-    context.strokeStyle = "rgba(255,255,255,.35)";
     context.setLineDash([3, 4]);
-    context.beginPath(); context.moveTo(cx, 24); context.lineTo(cx, height - 24); context.stroke();
-    context.beginPath(); context.moveTo(24, cy); context.lineTo(width - 24, cy); context.stroke();
+    const zeroX = (0 - bounds.horizontalMin) / hSpan * width;
+    const zeroY = (bounds.verticalMax - 0) / vSpan * height;
+    if (zeroX >= 0 && zeroX <= width) {
+      context.beginPath(); context.moveTo(zeroX, 0); context.lineTo(zeroX, height); context.stroke();
+    }
+    if (zeroY >= 0 && zeroY <= height) {
+      context.beginPath(); context.moveTo(0, zeroY); context.lineTo(width, zeroY); context.stroke();
+    }
     context.setLineDash([]);
 
-    const drawArrow = (x: number, y: number, angle: number, color: string) => {
-      context.save();
-      context.translate(x, y);
-      context.rotate(angle);
-      context.beginPath();
-      context.moveTo(0, 0);
-      context.lineTo(-6, -3);
-      context.lineTo(-6, 3);
-      context.closePath();
-      context.fillStyle = color;
-      context.fill();
-      context.restore();
-    };
+    context.fillStyle = "rgba(4, 22, 18, .82)";
+    context.fillRect(7, 7, 126, 30);
+    context.fillStyle = "#d7e7e0";
+    context.font = "8px ui-monospace, SFMono-Regular, Menlo, monospace";
+    context.fillText(
+      `${axisNames[0]} ${bounds.horizontalMin.toFixed(1)} … ${bounds.horizontalMax.toFixed(1)} cm`,
+      13,
+      19,
+    );
+    context.fillText(
+      `${axisNames[1]} ${bounds.verticalMin.toFixed(1)} … ${bounds.verticalMax.toFixed(1)} cm`,
+      13,
+      31,
+    );
+  }, [model, basis, slice, bounds, axisNames]);
 
-    [...boundaries]
-      .sort((a, b) => a.distance - b.distance)
-      .forEach((boundary, index) => {
-        const angle = boundary.type === "sqc"
-          ? -Math.PI / 2
-          : -0.22 - index * 0.28;
-        const length = (boundary.distance / maxDistance) * scale;
-        const endX = cx + Math.cos(angle) * length;
-        const endY = cy + Math.sin(angle) * length;
-        const color = index % 2 ? "#f4d399" : "#b7e0d1";
-
-        context.strokeStyle = color;
-        context.fillStyle = color;
-        context.lineWidth = 1;
-        context.setLineDash([2, 2]);
-        context.beginPath();
-        context.moveTo(cx, cy);
-        context.lineTo(endX, endY);
-        context.stroke();
-        context.setLineDash([]);
-        drawArrow(endX, endY, angle, color);
-
-        const label = `${boundary.name}  ${boundary.distance.toFixed(4)} cm`;
-        context.font = "9px ui-monospace, SFMono-Regular, Menlo, monospace";
-        const labelWidth = context.measureText(label).width + 8;
-        const labelX = Math.min(Math.max(endX + 7, 5), width - labelWidth - 5);
-        const labelY = Math.min(Math.max(endY - 13, 14), height - 8);
-        context.fillStyle = "rgba(4, 22, 18, .86)";
-        context.fillRect(labelX - 3, labelY - 9, labelWidth, 13);
-        context.fillStyle = color;
-        context.fillText(label, labelX, labelY);
-      });
-
-    context.fillStyle = "#eff8f4";
-    context.beginPath();
-    context.arc(cx, cy, 2.5, 0, Math.PI * 2);
-    context.fill();
-  }, [boundaries]);
+  function surfaceDetails(surface: (typeof visibleSurfaces)[number]) {
+    const v = surface.values;
+    if (surface.type === "cyl" || surface.type === "cylz") {
+      const centerDistance = Math.hypot(v[0] ?? 0, v[1] ?? 0);
+      return {
+        position: `(${(v[0] ?? 0).toFixed(2)}, ${(v[1] ?? 0).toFixed(2)})`,
+        dimension: `R ${(v.at(-1) ?? 0).toFixed(3)} · 중심거리 ${centerDistance.toFixed(3)}`,
+      };
+    }
+    if (surface.type === "pad") {
+      return {
+        position: `(${(v[0] ?? 0).toFixed(2)}, ${(v[1] ?? 0).toFixed(2)})`,
+        dimension: `R ${(v[2] ?? 0).toFixed(2)}–${(v[3] ?? 0).toFixed(2)} · ${v[4] ?? 0}°–${v[5] ?? 0}°`,
+      };
+    }
+    if (surface.type === "pz") {
+      return { position: `z = ${(v[0] ?? 0).toFixed(3)}`, dimension: `원점거리 ${Math.abs(v[0] ?? 0).toFixed(3)}` };
+    }
+    if (surface.type === "sph") {
+      return {
+        position: `(${(v[0] ?? 0).toFixed(1)}, ${(v[1] ?? 0).toFixed(1)}, ${(v[2] ?? 0).toFixed(1)})`,
+        dimension: `R ${(v[3] ?? 0).toFixed(3)}`,
+      };
+    }
+    if (surface.type === "sqc") {
+      return {
+        position: `(${(v[0] ?? 0).toFixed(2)}, ${(v[1] ?? 0).toFixed(2)})`,
+        dimension: `반폭 ${(v.at(-1) ?? 0).toFixed(3)}`,
+      };
+    }
+    return { position: `${surface.type} = ${(v[0] ?? 0).toFixed(3)}`, dimension: `원점거리 ${Math.abs(v[0] ?? 0).toFixed(3)}` };
+  }
 
   return (
     <div className="preview-panel">
       <div className="preview-toolbar">
-        <div className="segmented"><button className="active">XY</button><button>XZ</button><button>YZ</button></div>
-        <span>z = 0.000 cm</span>
+        <div className="segmented">
+          {(["xy", "xz", "yz"] as PlotBasis[]).map((item) => (
+            <button className={basis === item ? "active" : ""} key={item} onClick={() => setBasis(item)}>
+              {item.toUpperCase()}
+            </button>
+          ))}
+        </div>
+        <label className="slice-control">
+          {axisNames[2]} =
+          <input type="number" step="1" value={slice} onChange={(event) => setSlice(Number(event.target.value))} />
+          cm
+        </label>
         <span className="dimension-unit">단위 cm</span>
       </div>
       <div className="canvas-wrap">
-        <canvas ref={canvas} aria-label="경계 치수가 표시된 Serpent XY 평면도" />
-        <div className="axis x">X</div>
-        <div className="axis y">Y</div>
-        <div className="origin-label">원점 (0, 0)</div>
+        <canvas ref={canvas} aria-label={`Serpent 입력문에서 생성한 ${basis.toUpperCase()} 재료 평면도`} />
+        <div className="axis x">{axisNames[0]}</div>
+        <div className="axis y">{axisNames[1]}</div>
+        <div className="source-badge">INPUT CSG</div>
       </div>
       <div className="legend">
-        <div className="legend-head"><strong>구분 경계 치수</strong><span>{boundaries.length}</span></div>
-        <div className="dimension-table-head">
-          <span>경계</span><span>형식</span><span>중심 → 경계</span><span>전체 치수</span>
+        <div className="material-strip">
+          {[...model.materials.values()].map((material) => (
+            <span key={material.name}><i style={{ background: `rgb(${material.color.join(",")})` }} />{material.name}</span>
+          ))}
         </div>
-        {boundaries.map((boundary, index) => (
-          <div className="dimension-row" key={boundary.card.id}>
-            <span style={{ background: ["#437d75", "#d9e3d6", "#c58b54", "#eec88c"][index % 4] }} />
-            <strong>{boundary.name}</strong>
-            <code>{boundary.type}</code>
-            <code>{boundary.distance.toFixed(4)} cm</code>
-            <code>{boundary.type === "cyl" ? "Ø" : "W"} {(boundary.distance * 2).toFixed(4)} cm</code>
+        <div className="legend-head"><strong>{basis.toUpperCase()} 구분 경계</strong><span>{visibleSurfaces.length}</span></div>
+        <div className="dimension-table-head">
+          <span>경계</span><span>형식</span><span>기준 위치</span><span>경계 치수 / 거리</span>
+        </div>
+        {visibleSurfaces.map((surface) => {
+          const details = surfaceDetails(surface);
+          return (
+          <div className="dimension-row" key={surface.id}>
+            <span />
+            <strong>{surface.id}</strong>
+            <code>{surface.type}</code>
+            <code>{details.position}</code>
+            <code>{details.dimension}</code>
           </div>
-        ))}
-        {!boundaries.length && <p className="no-preview">cyl 또는 sqc 표면을 추가하면 치수 평면도가 표시됩니다.</p>}
+        )})}
+        {!visibleSurfaces.length && <p className="no-preview">현재 단면과 교차하는 지원 표면이 없습니다.</p>}
       </div>
-      <p className="preview-note">점선 치수선은 각 표면 중심에서 구분 경계까지의 거리입니다. Ø는 원형 직경, W는 사각형 전체 폭입니다.</p>
+      <p className="preview-note">이 평면도는 결과 이미지가 아니라 입력문의 표면·셀 Boolean 조건과 물질 RGB 값을 픽셀별로 계산해 생성합니다.</p>
     </div>
   );
 }
