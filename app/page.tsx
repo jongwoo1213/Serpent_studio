@@ -22,13 +22,42 @@ import {
   validateSerpentInput,
 } from "../lib/serpent";
 
-const GROUPS: { label: string; kinds: CardKind[] }[] = [
-  { label: "형상", kinds: ["surface", "cell", "other"] },
-  { label: "물질", kinds: ["material"] },
-  { label: "계산 조건", kinds: ["title", "setting", "plot"] },
-  { label: "소스 및 검출기", kinds: ["source", "detector"] },
-  { label: "파일", kinds: ["include"] },
-];
+const GROUPS = [
+  "모델 개요",
+  "형상 · 경계",
+  "물질 · 핵데이터",
+  "계산 모드 · 조건",
+  "소스 · 검출기",
+  "시각화 · 출력",
+  "외부 파일 · 연동",
+  "고급 카드",
+] as const;
+
+const GEOMETRY_CARDS = new Set(["pin", "nest", "lat", "particle", "pbed", "trans", "transa", "transv", "div"]);
+const MATERIAL_CARDS = new Set(["therm", "thermstoch", "mix"]);
+const SOURCE_CARDS = new Set(["ene", "fun"]);
+const OUTPUT_CARDS = new Set(["mesh", "mplot"]);
+const COUPLING_CARDS = new Set(["ifc", "umsh"]);
+const LIBRARY_OPTIONS = new Set(["acelib", "declib", "nfylib", "bralib", "sfylib", "pdatadir"]);
+const OUTPUT_OPTIONS = new Set(["outp", "printm", "title"]);
+
+function cardCategory(card: SerpentCard) {
+  const data = getCardData(card);
+  const keyword = card.keyword.toLowerCase();
+  const option = data.name?.toLowerCase() ?? "";
+  if (card.kind === "title") return "모델 개요";
+  if (card.kind === "surface" || card.kind === "cell" || GEOMETRY_CARDS.has(keyword)) return "형상 · 경계";
+  if (card.kind === "material" || MATERIAL_CARDS.has(keyword) || (card.kind === "setting" && LIBRARY_OPTIONS.has(option))) {
+    return "물질 · 핵데이터";
+  }
+  if (card.kind === "source" || card.kind === "detector" || SOURCE_CARDS.has(keyword)) return "소스 · 검출기";
+  if (card.kind === "plot" || OUTPUT_CARDS.has(keyword) || (card.kind === "setting" && OUTPUT_OPTIONS.has(option))) {
+    return "시각화 · 출력";
+  }
+  if (card.kind === "include" || COUPLING_CARDS.has(keyword)) return "외부 파일 · 연동";
+  if (card.kind === "setting" || ["dep", "branch", "coef", "hisv"].includes(keyword)) return "계산 모드 · 조건";
+  return "고급 카드";
+}
 
 const CARD_TEMPLATES: Record<string, string> = {
   surface: "\n% --- New surface\nsurf new_surface cyl 0.0 0.0 1.0\n",
@@ -78,6 +107,242 @@ function formatKind(kind: CardKind) {
   }[kind];
 }
 
+type CardGuide = {
+  title: string;
+  description: string;
+  syntax: string;
+  tips: string[];
+  url: string;
+};
+
+const SYNTAX_MANUAL = "https://serpent.vtt.fi/docs/syntax/index.html";
+
+function surfaceParameterHint(type: string) {
+  return {
+    px: "x₀ — x축에 수직인 평면의 위치",
+    py: "y₀ — y축에 수직인 평면의 위치",
+    pz: "z₀ — z축에 수직인 평면의 위치",
+    cyl: "x₀  y₀  r — z축과 평행한 원통의 중심과 반지름",
+    cylz: "x₀  y₀  r — z축과 평행한 원통의 중심과 반지름",
+    sph: "x₀  y₀  z₀  r — 구의 중심과 반지름",
+    sqc: "x₀  y₀  r [r₀] — 정사각 기둥의 중심, 반폭, 선택적 모서리 반경",
+    pad: "x₀  y₀  r₁  r₂  α₁  α₂ — 원환 부채꼴의 중심, 내·외반경, 시작·끝 각도(°)",
+    cuboid: "x₁  x₂  y₁  y₂  z₁  z₂ — 직육면체의 각 축 최소·최대 좌표",
+    plane: "A  B  C  D — Ax + By + Cz = D 형태의 일반 평면",
+  }[type.toLowerCase()] ?? "선택한 표면 형식에 맞는 좌표와 치수를 cm 단위로 입력합니다.";
+}
+
+function guideForCard(card: SerpentCard, data: Record<string, string>): CardGuide {
+  const keyword = card.keyword.toLowerCase();
+  const option = data.name?.toLowerCase() ?? "";
+
+  if (card.kind === "surface") {
+    return {
+      title: "표면은 셀의 경계를 만듭니다",
+      description: "표면 자체에는 물질이 없으며, 셀 카드가 표면의 양·음 방향을 조합해 실제 공간을 정의합니다.",
+      syntax: "surf NAME TYPE PARAM₁ PARAM₂ …",
+      tips: [surfaceParameterHint(data.type ?? ""), "표면 이름은 cell, det, 변환 카드에서 다시 참조할 수 있습니다."],
+      url: "https://serpent.vtt.fi/docs/extra/csg_surfaces.html",
+    };
+  }
+  if (card.kind === "cell") {
+    return {
+      title: "셀은 공간에 물질 또는 다른 유니버스를 배치합니다",
+      description: "표면 번호의 부호와 Boolean 연산으로 닫힌 영역을 만들고, 그 영역을 물질·void·outside 또는 fill 유니버스로 채웁니다.",
+      syntax: "cell NAME UNI MAT  SURF₁ SURF₂ …",
+      tips: ["음수 표면은 음의 면(일반적으로 내부), 양수 표면은 양의 면을 선택합니다.", "공백은 교집합, 콜론(:)은 합집합, 괄호는 연산 그룹을 뜻합니다."],
+      url: `${SYNTAX_MANUAL}#cell`,
+    };
+  }
+  if (card.kind === "material") {
+    return {
+      title: "물질은 밀도와 핵종 조성을 정의합니다",
+      description: "수송 중 입자의 국소 상호작용 확률은 물질의 밀도, 온도 및 핵종 조성으로 결정됩니다.",
+      syntax: "mat NAME DENS [OPTION …]\\nNUCLIDE FRACTION …",
+      tips: ["음수 밀도는 g/cm³ 단위의 질량밀도, 양수는 원자밀도입니다.", "핵종 조성에서 원자 단위와 질량 단위를 섞지 마세요."],
+      url: `${SYNTAX_MANUAL}#mat`,
+    };
+  }
+  if (card.kind === "title") {
+    return {
+      title: "계산 사례를 알아보기 쉬운 이름으로 지정합니다",
+      description: "제목은 실행 중 출력과 표준 결과 파일에 기록됩니다. 생략하면 입력 파일명이 대신 사용됩니다.",
+      syntax: 'set title "NAME"',
+      tips: ["공백이나 특수문자가 포함된 제목은 따옴표로 감쌉니다."],
+      url: `${SYNTAX_MANUAL}#set-title`,
+    };
+  }
+  if (card.kind === "setting" && option === "pop") {
+    return {
+      title: "임계도 계산의 입자 수와 세대 수를 정합니다",
+      description: "세대당 중성자 수, 활성 세대, 비활성 세대를 지정하며 이 카드가 있으면 임계도 소스 계산 모드가 선택됩니다.",
+      syntax: "set pop NPG NGEN NSKIP [K₀ BTCH NCRIT]",
+      tips: ["NPG는 세대당 중성자 수, NGEN은 활성 세대, NSKIP은 초기 비활성 세대입니다.", "외부 소스 계산용 set nps와 동시에 사용할 수 없습니다."],
+      url: `${SYNTAX_MANUAL}#set-pop`,
+    };
+  }
+  if (card.kind === "setting" && option === "nps") {
+    return {
+      title: "외부 소스 계산의 총 입자 이력 수를 정합니다",
+      description: "총 입자 이력과 선택적 배치 수를 지정하며, 이 카드가 있으면 외부 소스 모드가 선택됩니다.",
+      syntax: "set nps NP [BTCH TBI]",
+      tips: ["NP는 전체 입자 이력 수입니다.", "임계도 계산용 set pop과 동시에 사용할 수 없습니다."],
+      url: `${SYNTAX_MANUAL}#set-nps`,
+    };
+  }
+  if (card.kind === "setting" && option === "bc") {
+    return {
+      title: "입자가 외부 경계를 통과할 때의 처리를 정합니다",
+      description: "모든 방향에 하나의 조건을 적용하거나 x·y·z 방향별 조건을 지정할 수 있습니다.",
+      syntax: "set bc MODE [ALB]  또는  set bc MODEₓ MODEᵧ MODE𝓏 [ALB]",
+      tips: ["1 = 흡수(black), 2 = 반사(reflective), 3 = 주기(periodic) 경계입니다.", "반사·주기 조건은 반복 가능한 외곽 표면에서 사용해야 합니다."],
+      url: `${SYNTAX_MANUAL}#set-bc`,
+    };
+  }
+  if (card.kind === "setting" && LIBRARY_OPTIONS.has(option)) {
+    return {
+      title: "Serpent가 사용할 핵데이터 라이브러리 경로를 지정합니다",
+      description: "단면적·붕괴·핵분열 수율 등 계산에 필요한 외부 데이터 파일을 연결하는 옵션입니다.",
+      syntax: `set ${option} "LIB₁" ["LIB₂" …]`,
+      tips: ["SERPENT_DATA 환경변수를 사용하지 않는 경우에는 절대 경로가 필요할 수 있습니다.", "배포된 웹 편집기는 파일 존재 여부까지 확인하지 않으므로 Serpent 실행 환경에서 다시 점검하세요."],
+      url: `${SYNTAX_MANUAL}#set-${option}`,
+    };
+  }
+  if (card.kind === "setting" && ["power", "powdens", "srcrate"].includes(option)) {
+    return {
+      title: "Monte Carlo 결과의 물리적 정규화 기준을 지정합니다",
+      description: "모의 입자 이력으로 얻은 반응률을 실제 출력, 출력밀도 또는 소스율 기준의 물리량으로 변환합니다.",
+      syntax: `set ${option} VALUE [MAT]`,
+      tips: ["power는 W, powdens는 kW/g, srcrate는 particles/s 기준입니다.", "연소 계산에서는 구간별 정규화 조건이 결과에 직접 영향을 줍니다."],
+      url: `${SYNTAX_MANUAL}#set-${option}`,
+    };
+  }
+  if (card.kind === "source") {
+    return {
+      title: "외부 소스의 입자·공간·에너지 분포를 정의합니다",
+      description: "점, 셀, 물질, 유니버스, 표면 또는 파일을 기준으로 시작 입자를 샘플링할 수 있습니다.",
+      syntax: "src NAME [PART] [sp X Y Z] [sc CELL] [sm MAT] [se E] …",
+      tips: ["sp는 점 위치, sc·sm·su는 셀·물질·유니버스 체적 소스입니다.", "체적 소스는 sx·sy·sz 또는 srad로 샘플링 범위를 좁히면 효율이 좋아집니다."],
+      url: `${SYNTAX_MANUAL}#src`,
+    };
+  }
+  if (card.kind === "detector") {
+    return {
+      title: "플럭스·반응률·전류 등의 확률론적 추정량을 계산합니다",
+      description: "공간, 에너지, 시간 영역과 반응 응답을 조합해 필요한 결과를 별도로 집계합니다.",
+      syntax: "det NAME [PART] [dc CELL] [dm MAT] [de EGRID] [dr MT RMAT] …",
+      tips: ["dc·dm·du·dl은 집계할 공간 영역을 제한합니다.", "de는 에너지 격자, dr은 반응 응답을 연결합니다."],
+      url: `${SYNTAX_MANUAL}#det`,
+    };
+  }
+  if (card.kind === "plot") {
+    return {
+      title: "Serpent 실행 시 생성할 형상 단면도를 설정합니다",
+      description: "plot은 단면 방향과 픽셀 크기를 지정하고, gplot은 파일명·강조·경계 등 더 세밀한 옵션을 제공합니다.",
+      syntax: keyword === "plot" ? "plot TYPE NX NY [POS …]" : "gplot NAME plane TYPE … pix NX NY …",
+      tips: ["plot 방향은 1 = YZ, 2 = XZ, 3 = XY입니다.", "현재 우측 미리보기는 이 카드와 별개로 입력문의 CSG를 즉시 계산합니다."],
+      url: `${SYNTAX_MANUAL}#${keyword}`,
+    };
+  }
+  if (card.kind === "include") {
+    return {
+      title: "다른 입력 파일을 현재 모델에 포함합니다",
+      description: "큰 모델을 형상·물질·설정 파일로 나눠 관리할 때 사용합니다.",
+      syntax: 'include "FILE"',
+      tips: ["경로에 공백이나 특수문자가 있으면 따옴표로 감쌉니다.", "브라우저 미리보기는 로컬 include 파일을 자동으로 읽을 수 없으므로 내용을 직접 합쳐야 합니다."],
+      url: `${SYNTAX_MANUAL}#include`,
+    };
+  }
+  if (keyword === "pin") {
+    return {
+      title: "동심 원통층으로 핀 유니버스를 만듭니다",
+      description: "재료와 외부 반지름을 안쪽부터 차례로 적어 연료봉 같은 반복 구조를 간단히 정의합니다.",
+      syntax: "pin UNI  MAT₁ R₁  MAT₂ R₂ … MATₙ",
+      tips: ["반지름은 cm 단위이며 바깥쪽으로 갈수록 증가해야 합니다.", "마지막 재료 영역은 바깥 방향으로 무한히 이어집니다."],
+      url: `${SYNTAX_MANUAL}#pin`,
+    };
+  }
+  if (keyword === "lat") {
+    return {
+      title: "반복되는 유니버스를 격자에 배치합니다",
+      description: "격자 형식, 원점, 피치, 크기와 유니버스 배열을 이용해 반복 형상을 구성합니다.",
+      syntax: "lat UNI TYPE X₀ Y₀ NX NY PITCH …",
+      tips: ["격자 TYPE에 따라 필요한 좌표와 배열 형식이 달라집니다.", "배치되는 각 항목은 별도로 정의된 유니버스 이름입니다."],
+      url: `${SYNTAX_MANUAL}#lat`,
+    };
+  }
+  if (keyword === "ene") {
+    return {
+      title: "검출기 등에 사용할 에너지 군 구조를 정의합니다",
+      description: "경계값 목록 또는 선형·로그 균등 구간으로 에너지 빈을 만듭니다.",
+      syntax: "ene NAME TYPE E₁ E₂ …  또는  ene NAME TYPE N EMIN EMAX",
+      tips: ["에너지 단위는 MeV입니다.", "TYPE 1은 경계 목록, TYPE 2·3은 선형·로그 균등 구간입니다."],
+      url: `${SYNTAX_MANUAL}#ene`,
+    };
+  }
+  if (keyword === "therm" || keyword === "thermstoch") {
+    return {
+      title: "결합 원자의 저에너지 중성자 산란 데이터를 연결합니다",
+      description: "물질 카드의 moder 옵션에서 사용하는 열산란 이름과 S(α,β) 라이브러리를 연결합니다.",
+      syntax: `${keyword} THNAME [T] LIB₁ [LIB₂ …]`,
+      tips: ["THNAME은 mat 카드의 moder 이름과 일치해야 합니다.", "온도 단위를 생략하면 Kelvin으로 해석됩니다."],
+      url: `${SYNTAX_MANUAL}#${keyword}`,
+    };
+  }
+  if (keyword === "dep") {
+    return {
+      title: "연소·방사화 계산의 시간 또는 연소도 구간을 정의합니다",
+      description: "각 구간의 단계 형식과 값을 순서대로 지정해 조성 변화 계산 이력을 만듭니다.",
+      syntax: "dep TYPE STEP₁ STEP₂ …",
+      tips: ["단계 형식에 따라 일(day), MWd/kgU 또는 누적값으로 해석됩니다.", "출력·출력밀도 등 정규화 조건은 구간 사이에서 변경할 수 있습니다."],
+      url: `${SYNTAX_MANUAL}#dep`,
+    };
+  }
+  if (["trans", "transa", "transb", "transv", "strans", "ftrans", "dtrans", "utrans"].includes(keyword)) {
+    return {
+      title: "표면·유니버스·소스·검출기 등의 좌표를 이동하거나 회전합니다",
+      description: "기본 형상을 복제하지 않고 위치와 방향을 바꿀 때 사용하는 좌표 변환 카드입니다.",
+      syntax: `${keyword} TARGET NAME  X Y Z  [ROTATION …]`,
+      tips: ["변환 대상 형식에 따라 첫 인수와 회전 표현이 달라집니다.", "구형 transa·strans·ftrans·dtrans·utrans 대신 최신 trans 문법을 권장합니다."],
+      url: `${SYNTAX_MANUAL}#${keyword}`,
+    };
+  }
+  if (card.kind === "setting") {
+    return {
+      title: `계산 옵션 set ${option}`,
+      description: "Serpent의 물리 모델, 계산 제어, 출력 또는 수치 알고리즘을 조정하는 입력 옵션입니다.",
+      syntax: `set ${option} ${data.values || "VALUE …"}`,
+      tips: ["값의 개수와 허용 범위는 옵션마다 다릅니다.", "기본값을 바꾸는 옵션이므로 공식 문법의 Notes와 제한 조건을 함께 확인하세요."],
+      url: `${SYNTAX_MANUAL}#set-${option}`,
+    };
+  }
+
+  return {
+    title: "Serpent 입력 카드",
+    description: "이 카드는 Serpent 입력 파서가 하나의 독립된 데이터 블록으로 처리합니다.",
+    syntax: `${card.keyword} ${data.name ?? "…"}`.trim(),
+    tips: ["옵션 순서와 필수 인수는 공식 입력 문법에서 확인하세요.", "카드 식별자와 같은 이름을 사용자 정의 인수로 사용하지 않는 것이 안전합니다."],
+    url: `${SYNTAX_MANUAL}#${keyword === "set" ? `set-${option}` : keyword}`,
+  };
+}
+
+function fieldHint(card: SerpentCard, key: string, data: Record<string, string>) {
+  const option = data.name?.toLowerCase() ?? "";
+  if (card.kind === "surface" && key === "type") return "예: cyl, sph, px, pz, sqc, pad";
+  if (card.kind === "surface" && key === "values") return surfaceParameterHint(data.type ?? "");
+  if (card.kind === "cell" && key === "universe") return "0은 최상위(root) 유니버스입니다.";
+  if (card.kind === "cell" && key === "material") return "mat 카드의 이름, void, outside 또는 fill을 입력합니다.";
+  if (card.kind === "cell" && key === "region") return "음수: 표면의 음의 면 · 양수: 양의 면 · 공백: 교집합 · 콜론(:): 합집합";
+  if (card.kind === "material" && key === "density") return "음수: 질량밀도(g/cm³) · 양수: 원자밀도";
+  if (card.kind === "material" && key === "composition") return "한 줄에 핵종명과 분율/밀도를 입력합니다. 예: 92235.09c  4.9E-02";
+  if (card.kind === "setting" && option === "pop" && key === "values") return "세대당 중성자 수  활성 세대  비활성 세대  [초기 k-eff  배치 간격  독립 계산 수]";
+  if (card.kind === "setting" && option === "nps" && key === "values") return "전체 입자 이력 수  [배치 수  시간 빈]";
+  if (card.kind === "setting" && option === "bc" && key === "values") return "1: 흡수 · 2: 반사 · 3: 주기 · 선택적으로 albedo를 추가합니다.";
+  if (card.kind === "source" && key === "values") return "예: n sp 0 0 0 se 1.0 — 중성자 점 소스와 에너지";
+  if (card.kind === "detector" && key === "values") return "예: dm fuel dr -6 fuel de energy_grid";
+  return "";
+}
+
 export default function Home() {
   const [source, setSource] = useState(SAMPLE_INPUT);
   const [fileName, setFileName] = useState("pwr_pin.inp");
@@ -93,6 +358,7 @@ export default function Home() {
   const issues = useMemo(() => validateSerpentInput(cards), [cards]);
   const selected = cards.find((card) => card.id === selectedId) ?? cards.find((card) => card.kind === "surface") ?? cards[0];
   const selectedData = selected ? getCardData(selected) : {};
+  const selectedGuide = selected ? guideForCard(selected, selectedData) : null;
   const errors = issues.filter((issue) => issue.level === "error").length;
 
   useEffect(() => {
@@ -202,12 +468,12 @@ export default function Home() {
           )}
           <nav className="model-tree" aria-label="Serpent 카드">
             {GROUPS.map((group) => {
-              const groupCards = cards.filter((card) => group.kinds.includes(card.kind));
+              const groupCards = cards.filter((card) => cardCategory(card) === group);
               if (!groupCards.length) return null;
               return (
-                <div className="tree-group" key={group.label}>
+                <div className="tree-group" key={group}>
                   <div className="tree-label">
-                    <span>{group.label}</span>
+                    <span>{group}</span>
                     <span>{groupCards.length}</span>
                   </div>
                   {groupCards.map((card) => (
@@ -265,17 +531,35 @@ export default function Home() {
             <div className="form-editor">
               <div className="card-header">
                 <div>
-                  <span className="eyebrow">{formatKind(selected.kind)}</span>
+                  <span className="eyebrow">{cardCategory(selected)} · {formatKind(selected.kind)}</span>
                   <h1>{selected.label}</h1>
                   <p>입력 카드의 값을 수정하면 Serpent 원문에 바로 반영됩니다.</p>
                 </div>
                 <span className="line-badge">LINE {selected.startLine}</span>
               </div>
 
+              {selectedGuide && (
+                <section className="card-guide" aria-label="Serpent 매뉴얼 안내">
+                  <div className="guide-copy">
+                    <span>공식 매뉴얼 기반 안내</span>
+                    <strong>{selectedGuide.title}</strong>
+                    <p>{selectedGuide.description}</p>
+                  </div>
+                  <code>{selectedGuide.syntax}</code>
+                  <ul>
+                    {selectedGuide.tips.map((tip) => <li key={tip}>{tip}</li>)}
+                  </ul>
+                  <a href={selectedGuide.url} target="_blank" rel="noreferrer">
+                    공식 문법 보기 ↗
+                  </a>
+                </section>
+              )}
+
               <div className="form-grid">
                 {Object.entries(selectedData).map(([key, value]) => {
                   const wide = ["values", "region", "composition", "comment"].includes(key);
                   const multiline = key === "composition";
+                  const hint = fieldHint(selected, key, selectedData);
                   return (
                     <label className={wide ? "field wide" : "field"} key={`${selected.id}-${key}`}>
                       <span>{fieldLabel(selected, key)}</span>
@@ -288,8 +572,7 @@ export default function Home() {
                       ) : (
                         <input value={value} onChange={(event) => handleField(key, event.target.value)} />
                       )}
-                      {key === "density" && <small>음수는 질량 밀도(g/cm³), 양수는 원자 밀도입니다.</small>}
-                      {key === "region" && <small>음수는 표면 내부, 양수는 표면 외부를 뜻합니다.</small>}
+                      {hint && <small>{hint}</small>}
                     </label>
                   );
                 })}
