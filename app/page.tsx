@@ -1948,75 +1948,214 @@ function GeometryPreview({
   );
 }
 
-const SPECTRUM_WIDTH = 640;
-const SPECTRUM_HEIGHT = 220;
-const SPECTRUM_PAD = { left: 54, right: 12, top: 12, bottom: 34 };
+const SPECTRUM_WIDTH = 720;
+const SPECTRUM_HEIGHT = 320;
+const SPECTRUM_PAD = { left: 74, right: 18, top: 18, bottom: 54 };
+/** Serpent 의 MICRO_E 는 MeV 단위지만, 노심 스펙트럼 그림은 관례적으로 eV 축을 쓴다. */
+const EV_PER_MEV = 1e6;
+/** 봉우리 아래로 이만큼의 decade 까지만 보여준다. 더 넓히면 통계잡음만 늘어난다. */
+const SPECTRUM_DECADES = 5;
 
-/** 군 단위 중성자속을 로그-로그 계단 경로와 눈금으로 환산한다. */
-function buildSpectrumPath(bins: ResultCase["spectrum"]) {
+/**
+ * 군 단위 중성자속을 로그-로그 계단 그래프 좌표로 환산한다.
+ *
+ * 축 관례는 노심해석 논문을 따랐다. 가로는 eV 로그축, 세로는 단위 렙서지당
+ * 중성자속의 로그축이고, 군 데이터이므로 곡선이 아니라 계단으로 그린다.
+ */
+function buildSpectrumGeometry(bins: ResultCase["spectrum"]) {
+  const usable = bins.filter((bin) => bin.perLethargy > 0);
+  if (usable.length < 2) return null;
+
   const width = SPECTRUM_WIDTH;
   const height = SPECTRUM_HEIGHT;
   const pad = SPECTRUM_PAD;
+  const plotRight = width - pad.right;
+  const plotBottom = height - pad.bottom;
 
-  {
-    const usable = bins.filter((bin) => bin.perLethargy > 0);
-    if (usable.length < 2) return null;
+  const eLow = Math.log10(usable[0].low * EV_PER_MEV);
+  const eHigh = Math.log10(usable[usable.length - 1].high * EV_PER_MEV);
+  const peak = Math.max(...usable.map((bin) => bin.perLethargy));
+  const fluxHigh = Math.ceil(Math.log10(peak));
+  const fluxLow = fluxHigh - SPECTRUM_DECADES;
 
-    const eMin = Math.log10(usable[0].low);
-    const eMax = Math.log10(usable[usable.length - 1].high);
-    const fluxMax = Math.log10(Math.max(...usable.map((bin) => bin.perLethargy)));
-    // 아래로 4 decade 만 보여주면 열·고속 봉우리 구조가 가장 잘 드러난다.
-    const fluxMin = fluxMax - 4;
+  const x = (energyEv: number) =>
+    pad.left + ((Math.log10(energyEv) - eLow) / (eHigh - eLow)) * (plotRight - pad.left);
+  const y = (flux: number) => {
+    const clamped = Math.min(fluxHigh, Math.max(fluxLow, Math.log10(flux)));
+    return plotBottom - ((clamped - fluxLow) / (fluxHigh - fluxLow)) * (plotBottom - pad.top);
+  };
 
-    const x = (energy: number) =>
-      pad.left + ((Math.log10(energy) - eMin) / (eMax - eMin)) * (width - pad.left - pad.right);
-    const y = (flux: number) => {
-      const clamped = Math.max(fluxMin, Math.log10(flux));
-      return height - pad.bottom - ((clamped - fluxMin) / (fluxMax - fluxMin)) * (height - pad.top - pad.bottom);
-    };
+  // 각 군을 사각형 구간으로 들고 있어야 계단 경로와 마우스 적중 판정을 함께 쓸 수 있다.
+  const steps = usable.map((bin, index) => {
+    const x1 = x(bin.low * EV_PER_MEV);
+    const x2 = x(bin.high * EV_PER_MEV);
+    return { index, bin, x1, x2, top: y(bin.perLethargy) };
+  });
 
-    // 군 단위 값이므로 곡선이 아니라 계단으로 그려야 물리적으로 정확하다.
-    const steps: string[] = [];
-    usable.forEach((bin, index) => {
-      const top = y(bin.perLethargy);
-      steps.push(`${index === 0 ? "M" : "L"}${x(bin.low).toFixed(1)} ${top.toFixed(1)}`);
-      steps.push(`L${x(bin.high).toFixed(1)} ${top.toFixed(1)}`);
-    });
+  const line: string[] = [];
+  steps.forEach((step, index) => {
+    line.push(`${index === 0 ? "M" : "L"}${step.x1.toFixed(1)} ${step.top.toFixed(1)}`);
+    line.push(`L${step.x2.toFixed(1)} ${step.top.toFixed(1)}`);
+  });
+  const area = `${line.join(" ")} L${steps[steps.length - 1].x2.toFixed(1)} ${plotBottom} L${steps[0].x1.toFixed(1)} ${plotBottom} Z`;
 
-    const ticks: { at: number; label: string }[] = [];
-    for (let decade = Math.ceil(eMin); decade <= Math.floor(eMax); decade += 1) {
-      if (decade % 2 !== 0) continue;
-      ticks.push({ at: x(10 ** decade), label: `1e${decade}` });
-    }
-
-    return { d: steps.join(" "), ticks, baseline: y(10 ** fluxMin) };
+  // 12 decade 를 넘나드는 가로축은 전부 찍으면 겹치므로 2 decade 간격으로 둔다.
+  const xTicks: { at: number; exp: number; major: boolean }[] = [];
+  for (let decade = Math.ceil(eLow); decade <= Math.floor(eHigh); decade += 1) {
+    xTicks.push({ at: x(10 ** decade), exp: decade, major: decade % 2 === 0 });
   }
+
+  const yTicks: { at: number; exp: number }[] = [];
+  for (let decade = fluxLow; decade <= fluxHigh; decade += 1) {
+    yTicks.push({ at: y(10 ** decade), exp: decade });
+  }
+
+  return { width, height, pad, plotRight, plotBottom, steps, line: line.join(" "), area, xTicks, yTicks };
+}
+
+/** 10ⁿ 형태의 눈금 라벨. SVG 에는 위첨자가 없으므로 tspan 으로 올린다. */
+function TickPower({ x, y, exp, anchor }: { x: number; y: number; exp: number; anchor: "middle" | "end" }) {
+  return (
+    <text x={x} y={y} className="tick" textAnchor={anchor}>
+      {/* 하이픈이 아니라 활자용 마이너스를 써야 지수가 제대로 읽힌다. */}
+      10<tspan dy="-4" fontSize="8">{exp < 0 ? `−${Math.abs(exp)}` : exp}</tspan>
+    </text>
+  );
+}
+
+function formatFlux(value: number) {
+  const exp = Math.floor(Math.log10(value));
+  const mantissa = value / 10 ** exp;
+  const digits = "⁰¹²³⁴⁵⁶⁷⁸⁹";
+  const superscript = `${Math.abs(exp)}`.split("").map((d) => digits[Number(d)]).join("");
+  return `${mantissa.toFixed(2)} × 10${exp < 0 ? "⁻" : ""}${superscript}`;
 }
 
 function SpectrumChart({ bins }: { bins: ResultCase["spectrum"] }) {
-  const width = SPECTRUM_WIDTH;
-  const height = SPECTRUM_HEIGHT;
-  const pad = SPECTRUM_PAD;
-  const path = useMemo(() => buildSpectrumPath(bins), [bins]);
+  const geometry = useMemo(() => buildSpectrumGeometry(bins), [bins]);
+  const [hover, setHover] = useState<number | null>(null);
+  const [showTable, setShowTable] = useState(false);
+  const svgRef = useRef<SVGSVGElement>(null);
 
-  if (!path) return null;
+  if (!geometry) return null;
+  const { width, height, pad, plotRight, plotBottom, steps, xTicks, yTicks } = geometry;
+
+  // 뷰포트 크기와 무관하게 동작하도록 화면 좌표를 viewBox 좌표로 되돌린다.
+  function track(event: ReactPointerEvent<SVGSVGElement>) {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const local = ((event.clientX - rect.left) / rect.width) * width;
+    if (local < pad.left || local > plotRight) { setHover(null); return; }
+    // 어느 군에도 정확히 걸치지 않아도 가장 가까운 군을 잡아준다.
+    let nearest = 0;
+    let best = Infinity;
+    for (const step of steps) {
+      const distance = local < step.x1 ? step.x1 - local : local > step.x2 ? local - step.x2 : 0;
+      if (distance < best) { best = distance; nearest = step.index; }
+    }
+    setHover(nearest);
+  }
+
+  const active = hover !== null ? steps[hover] : null;
 
   return (
-    <svg className="spectrum-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="중성자속 스펙트럼">
-      <line x1={pad.left} y1={height - pad.bottom} x2={width - pad.right} y2={height - pad.bottom} className="axis" />
-      <line x1={pad.left} y1={pad.top} x2={pad.left} y2={height - pad.bottom} className="axis" />
-      {path.ticks.map((tick) => (
-        <g key={tick.label}>
-          <line x1={tick.at} y1={height - pad.bottom} x2={tick.at} y2={height - pad.bottom + 4} className="axis" />
-          <text x={tick.at} y={height - pad.bottom + 16} className="tick">{tick.label}</text>
-        </g>
-      ))}
-      <text x={width / 2} y={height - 4} className="tick strong">에너지 (MeV)</text>
-      <text x={12} y={height / 2} className="tick strong" transform={`rotate(-90 12 ${height / 2})`}>
-        렙서지당 중성자속
-      </text>
-      <path d={path.d} className="spectrum-line" />
-    </svg>
+    <div className="spectrum-figure">
+      <svg
+        ref={svgRef}
+        className="spectrum-chart"
+        viewBox={`0 0 ${width} ${height}`}
+        role="img"
+        aria-label="Neutron flux spectrum per unit lethargy"
+        onPointerMove={track}
+        onPointerLeave={() => setHover(null)}
+      >
+        {yTicks.map((tick) => (
+          <line key={`gy-${tick.exp}`} x1={pad.left} y1={tick.at} x2={plotRight} y2={tick.at} className="grid" />
+        ))}
+        {xTicks.map((tick) => (
+          <line key={`gx-${tick.exp}`} x1={tick.at} y1={pad.top} x2={tick.at} y2={plotBottom} className="grid" />
+        ))}
+
+        <path d={geometry.area} className="spectrum-area" />
+        <path d={geometry.line} className="spectrum-line" />
+
+        {active && (
+          <g className="spectrum-cursor">
+            <rect x={active.x1} y={pad.top} width={Math.max(1, active.x2 - active.x1)} height={plotBottom - pad.top} />
+            <line x1={active.x1} y1={active.top} x2={active.x2} y2={active.top} />
+          </g>
+        )}
+
+        <line x1={pad.left} y1={plotBottom} x2={plotRight} y2={plotBottom} className="axis" />
+        <line x1={pad.left} y1={pad.top} x2={pad.left} y2={plotBottom} className="axis" />
+
+        {xTicks.map((tick) => (
+          <g key={`x-${tick.exp}`}>
+            <line x1={tick.at} y1={plotBottom} x2={tick.at} y2={plotBottom + (tick.major ? 5 : 3)} className="axis" />
+            {tick.major && <TickPower x={tick.at} y={plotBottom + 18} exp={tick.exp} anchor="middle" />}
+          </g>
+        ))}
+        {yTicks.map((tick) => (
+          <g key={`y-${tick.exp}`}>
+            <line x1={pad.left - 5} y1={tick.at} x2={pad.left} y2={tick.at} className="axis" />
+            <TickPower x={pad.left - 9} y={tick.at + 3} exp={tick.exp} anchor="end" />
+          </g>
+        ))}
+
+        <text x={(pad.left + plotRight) / 2} y={height - 12} className="axis-title">Energy (eV)</text>
+        <text
+          x={16}
+          y={(pad.top + plotBottom) / 2}
+          className="axis-title"
+          transform={`rotate(-90 16 ${(pad.top + plotBottom) / 2})`}
+        >
+          Flux per unit lethargy
+        </text>
+      </svg>
+
+      <div className="spectrum-readout" role="status" aria-live="polite">
+        {active ? (
+          <>
+            <strong>{formatFlux(active.bin.perLethargy)}</strong>
+            <span>
+              그룹 {active.index + 1} · {(active.bin.low * EV_PER_MEV).toExponential(2)} – {(active.bin.high * EV_PER_MEV).toExponential(2)} eV
+            </span>
+          </>
+        ) : (
+          <span className="spectrum-hint">그래프 위에 마우스를 올리면 해당 에너지군의 값을 보여줍니다.</span>
+        )}
+      </div>
+
+      <button className="link-button" onClick={() => setShowTable(!showTable)} aria-expanded={showTable}>
+        {showTable ? "표 닫기" : "표로 보기"} ({steps.length}개 군)
+      </button>
+
+      {showTable && (
+        <div className="table-scroll spectrum-table-wrap">
+          <table className="worth-table spectrum-table">
+            <thead>
+              <tr>
+                <th>군</th>
+                <th>하한 (eV)</th>
+                <th>상한 (eV)</th>
+                <th>렙서지당 중성자속</th>
+              </tr>
+            </thead>
+            <tbody>
+              {steps.map((step) => (
+                <tr key={step.index} className={hover === step.index ? "is-reference" : ""}>
+                  <td className="num">{step.index + 1}</td>
+                  <td className="num">{(step.bin.low * EV_PER_MEV).toExponential(2)}</td>
+                  <td className="num">{(step.bin.high * EV_PER_MEV).toExponential(2)}</td>
+                  <td className="num">{step.bin.perLethargy.toExponential(3)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
 

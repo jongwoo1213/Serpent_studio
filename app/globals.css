@@ -927,8 +927,72 @@ button { color: inherit; }
 
 .physics-item small { color: var(--muted-soft); font-size: var(--fs-micro); line-height: 1.4; }
 
-.spectrum-chart { width: 100%; height: auto; }
+.spectrum-figure { display: flex; flex-direction: column; gap: 0.5rem; }
+
+.spectrum-chart {
+  width: 100%;
+  height: auto;
+  touch-action: none;
+}
+
+/* 그리드와 축은 표면에서 한 단계만 떨어진 실선 헤어라인으로 둔다. */
+.spectrum-chart .grid { stroke: var(--line-soft); stroke-width: 1; }
 .spectrum-chart .axis { stroke: var(--line); stroke-width: 1; }
-.spectrum-chart .tick { fill: var(--muted); font-size: 10px; text-anchor: middle; }
-.spectrum-chart .tick.strong { fill: var(--ink-soft); font-size: 11px; }
-.spectrum-chart .spectrum-line { fill: none; stroke: var(--green); stroke-width: 1.6; }
+
+.spectrum-chart .tick {
+  fill: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.spectrum-chart .axis-title {
+  fill: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 600;
+  text-anchor: middle;
+}
+
+.spectrum-chart .spectrum-area { fill: var(--green); opacity: 0.08; stroke: none; }
+.spectrum-chart .spectrum-line { fill: none; stroke: var(--green); stroke-width: 2; stroke-linejoin: round; }
+
+.spectrum-chart .spectrum-cursor rect { fill: var(--green); opacity: 0.12; }
+.spectrum-chart .spectrum-cursor line { stroke: var(--green-deep); stroke-width: 2; }
+
+.spectrum-readout {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  min-height: 1.5rem;
+  padding: 0.375rem 0.5rem;
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+}
+
+/* 값이 먼저 읽히고 라벨이 뒤따르게 한다. */
+.spectrum-readout strong {
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.spectrum-readout span { color: var(--muted); font-family: var(--mono); font-size: var(--fs-micro); }
+.spectrum-readout .spectrum-hint { font-family: var(--sans); }
+
+.link-button {
+  align-self: flex-start;
+  padding: 0.1875rem 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: none;
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+}
+
+.link-button:hover { color: var(--green); border-color: var(--green); }
+
+.spectrum-table-wrap { max-height: 18rem; overflow-y: auto; }
+.spectrum-table td, .spectrum-table th { padding: 0.25rem 0.5rem; }
+.spectrum-table td:first-child { display: table-cell; text-align: right; }
