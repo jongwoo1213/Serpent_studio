@@ -637,11 +637,38 @@ button { color: inherit; }
 }
 
 .results-empty-hint {
-  padding: 0.75rem;
+  margin: 0 0 0.75rem;
+  padding: 0.875rem 0.875rem 0.875rem 1.125rem;
   border-radius: var(--radius-sm);
   background: var(--green-tint);
-  color: var(--ink-soft) !important;
+  color: var(--ink-soft);
+  font-size: var(--fs-xs);
+  line-height: 1.65;
   text-align: left;
+}
+
+.results-empty-hint li + li { margin-top: 0.5rem; }
+.results-empty-hint strong { color: var(--green-deep); }
+
+/* 폴더 선택 창에서 파일이 회색으로 보이는 건 정상이라는 안내. */
+.results-empty-hint em {
+  display: block;
+  margin-top: 0.1875rem;
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  font-style: normal;
+}
+
+.results-empty-note {
+  margin: 0 0 1rem;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+
+.results-empty-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
 }
 
 .results-empty code {

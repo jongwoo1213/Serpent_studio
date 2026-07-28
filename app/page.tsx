@@ -974,7 +974,8 @@ export default function Home() {
             ref={resultInput}
             type="file"
             aria-label="Serpent 결과 파일 선택"
-            accept=".m,text/plain"
+            // accept 를 걸면 확장자 없는 Serpent 입력문이 회색 처리돼 함께 고를 수 없다.
+            // 어차피 파일 종류는 내용을 보고 판별하므로 필터를 두지 않는다.
             multiple
             hidden
             onChange={onPickFiles}
@@ -984,6 +985,7 @@ export default function Home() {
             type="file"
             aria-label="계산 폴더 선택"
             hidden
+            multiple
             // 폴더째 받아야 같은 이름의 입력문과 결과문을 짝지을 수 있다.
             {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
             onChange={onPickFiles}
@@ -996,10 +998,10 @@ export default function Home() {
           </button>
           <button
             className="button ghost"
-            title="폴더를 통째로 열면 이름이 같은 입력문과 결과문을 자동으로 연결합니다"
+            title="폴더 선택 창이 열립니다. 안의 파일이 회색으로 보이는 것은 정상이며, 폴더를 고른 뒤 열기를 누르세요."
             onClick={() => folderInput.current?.click()}
           >
-            <Icon>▤</Icon> 폴더 열기
+            <Icon>▤</Icon> 폴더 선택
           </button>
           <button className="button ghost" onClick={downloadInput}>
             <Icon>↓</Icon> 내보내기
@@ -1125,6 +1127,7 @@ export default function Home() {
               onPickActive={pickActiveResult}
               onPickReference={setReferenceId}
               onOpen={() => resultInput.current?.click()}
+              onOpenFolder={() => folderInput.current?.click()}
               onRemove={removeResult}
               linkedInput={inputFor}
               onOpenLinkedInput={(file) => { loadInput(file); setView("builder"); }}
@@ -2291,6 +2294,7 @@ function ResultsPanel({
   onPickActive,
   onPickReference,
   onOpen,
+  onOpenFolder,
   onRemove,
   linkedInput,
   onOpenLinkedInput,
@@ -2301,6 +2305,7 @@ function ResultsPanel({
   onPickActive: (id: string) => void;
   onPickReference: (id: string) => void;
   onOpen: () => void;
+  onOpenFolder: () => void;
   onRemove: (id: string) => void;
   linkedInput: (item: ResultCase) => IngestedFile | undefined;
   onOpenLinkedInput: (file: IngestedFile) => void;
@@ -2319,13 +2324,26 @@ function ResultsPanel({
             계산이 끝나면 생기는 <code>*_res.m</code> 파일을 열면 keff·반응도·지발중성자분율 같은
             주요 결과가 자동으로 정리됩니다.
           </p>
-          <p className="results-empty-hint">
-            여러 개를 한꺼번에 선택하면 기준 케이스 대비 반응도가(Δρ)를 표로 비교합니다.
-            제어봉·제어드럼 배치를 바꿔가며 돌린 계산을 비교할 때 쓰세요.
+          <ul className="results-empty-hint">
+            <li>
+              <strong>폴더 선택</strong> — 계산 폴더를 통째로 엽니다. 이름이 같은 입력문과 결과문을
+              모두 자동으로 연결하므로 가장 편합니다.
+              <em>폴더 선택 창에서는 안의 파일이 회색으로 보이는 것이 정상입니다. 파일이 아니라 폴더를 고르세요.</em>
+            </li>
+            <li><strong>끌어다 놓기</strong> — 파일이나 폴더를 이 창에 그대로 놓아도 됩니다.</li>
+            <li><strong>결과 열기</strong> — 파일을 직접 고릅니다. 입력문과 <code>_res.m</code>을 함께 고르면 연결됩니다.</li>
+          </ul>
+          <p className="results-empty-note">
+            결과문을 여러 개 넣으면 기준 케이스 대비 반응도가(Δρ)를 표로 비교합니다.
           </p>
-          <button className="button primary" onClick={onOpen}>
-            <Icon>↥</Icon> 결과 파일 열기
-          </button>
+          <div className="results-empty-actions">
+            <button className="button primary" onClick={onOpenFolder}>
+              <Icon>▤</Icon> 폴더 선택
+            </button>
+            <button className="button ghost" onClick={onOpen}>
+              <Icon>↥</Icon> 파일 고르기
+            </button>
+          </div>
         </div>
       </div>
     );
