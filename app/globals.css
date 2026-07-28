@@ -647,7 +647,17 @@ button { color: inherit; }
   text-align: left;
 }
 
+.results-empty-hint { padding-left: 1.5rem; }
+.results-empty-hint li { padding-left: 0.25rem; }
 .results-empty-hint li + li { margin-top: 0.5rem; }
+.results-empty-hint li::marker { color: var(--green); font-weight: 700; }
+.results-empty-hint code {
+  padding: 0 0.1875rem;
+  border-radius: 0.1875rem;
+  background: var(--mint);
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+}
 .results-empty-hint strong { color: var(--green-deep); }
 
 /* 폴더 선택 창에서 파일이 회색으로 보이는 건 정상이라는 안내. */
