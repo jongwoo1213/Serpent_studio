@@ -684,6 +684,11 @@ export default function Home() {
   // 형상 미리보기 패널의 폭(px). 좌우 리사이저로 조절하고 다음 방문에도 기억한다.
   const [geometryWidth, setGeometryWidth] = useState(GEOMETRY_WIDTH_DEFAULT);
   const [resizingGeometry, setResizingGeometry] = useState(false);
+  // 형상 미리보기는 캔버스 재계산과 겹침/빈틈 표본검사를 동반해 매 타이핑마다 다시
+  // 그리면 큰 입력에서 느려진다. 새로고침을 누르기 전까지는 이 값(마지막으로 반영한
+  // 원문) 기준으로만 다시 계산한다.
+  const [geometrySource, setGeometrySource] = useState(SAMPLE_INPUT);
+  const [showIssues, setShowIssues] = useState(false);
   const [results, setResults] = useState<ResultCase[]>([]);
   const [referenceId, setReferenceId] = useState("");
   const [activeResultId, setActiveResultId] = useState("");
@@ -702,7 +707,11 @@ export default function Home() {
   const loadedSource = useRef(SAMPLE_INPUT);
 
   const cards = useMemo(() => parseSerpentInput(source), [source]);
-  const model = useMemo(() => parseGeometryModel(cards), [cards]);
+
+  // 형상 미리보기와 겹침/빈틈 진단은 새로고침을 눌러야 반영되는 별도 스냅샷에서 계산한다.
+  const geometryCards = useMemo(() => parseSerpentInput(geometrySource), [geometrySource]);
+  const geometryModel = useMemo(() => parseGeometryModel(geometryCards), [geometryCards]);
+  const geometryStale = source !== geometrySource;
 
   // 셀 이름 → 카드 id. 형상 진단 결과에서 문제가 된 셀 카드로 바로 이동할 수 있게 한다.
   const cellCardIds = useMemo(() => {
@@ -716,7 +725,8 @@ export default function Home() {
   }, [cards]);
 
   const syntaxIssues = useMemo(() => validateSerpentInput(cards), [cards]);
-  const geometryIssues = useMemo(() => diagnoseGeometry(model, cellCardIds), [model, cellCardIds]);
+  // 겹침/빈틈 진단은 형상 표본검사를 그대로 재사용하므로 geometryModel 이 갱신될 때만 다시 돈다.
+  const geometryIssues = useMemo(() => diagnoseGeometry(geometryModel, cellCardIds), [geometryModel, cellCardIds]);
   const issues = useMemo(() => [...syntaxIssues, ...geometryIssues], [syntaxIssues, geometryIssues]);
 
   const selected = cards.find((card) => card.id === selectedId) ?? cards.find((card) => card.kind === "surface") ?? cards[0];
@@ -724,6 +734,8 @@ export default function Home() {
   const selectedGuide = selected ? guideForCard(selected, selectedData) : null;
   const selectedMeanings = selected ? interpretCardValues(selected, selectedData) : [];
   const errors = issues.filter((issue) => issue.level === "error").length;
+  const issuesTone = errors ? "bad" : issues.length ? "warn" : "ok";
+  const issuesLabel = errors ? `오류 ${errors}개` : issues.length ? `권장 ${issues.length}개` : "정상";
 
   const groupedCards = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -833,8 +845,15 @@ export default function Home() {
   function loadInput(file: IngestedFile) {
     loadedSource.current = file.text;
     setSource(file.text);
+    // 파일을 새로 여는 것은 편집 중 타이핑이 아니라 완전히 새 내용이므로 곧바로 반영한다.
+    setGeometrySource(file.text);
     setFileName(file.name);
     setSelectedId("");
+  }
+
+  /** 형상 미리보기를 지금 편집 중인 원문으로 다시 계산한다. */
+  function refreshGeometry() {
+    setGeometrySource(source);
   }
 
   /**
@@ -963,6 +982,7 @@ export default function Home() {
   function runValidation() {
     setLogOpen(true);
     setView("builder");
+    setShowIssues(true);
   }
 
   return (
@@ -1170,7 +1190,11 @@ export default function Home() {
               {results.length > 0 && <span className="tab-count">{results.length}</span>}
             </button>
             <div className="undo-group">
-              <button className="icon-button" title="샘플로 되돌리기" onClick={() => setSource(SAMPLE_INPUT)}>↶</button>
+              <button
+                className="icon-button"
+                title="샘플로 되돌리기"
+                onClick={() => { setSource(SAMPLE_INPUT); setGeometrySource(SAMPLE_INPUT); }}
+              >↶</button>
             </div>
           </div>
 
@@ -1329,41 +1353,80 @@ export default function Home() {
         <aside className="geometry-pane" aria-label="형상 미리보기">
           <div className="geometry-pane-heading">
             <span>형상 미리보기</span>
+            <div className="geometry-heading-actions">
+              <button
+                type="button"
+                className={geometryStale ? "refresh-button stale" : "refresh-button"}
+                onClick={refreshGeometry}
+                disabled={!geometryStale}
+                title={
+                  geometryStale
+                    ? "입력이 바뀌었습니다. 눌러서 형상을 다시 그립니다."
+                    : "형상이 최신 상태입니다."
+                }
+              >
+                <Icon>↻</Icon> {geometryStale ? "새로고침 필요" : "새로고침"}
+              </button>
+              <button
+                type="button"
+                className={`issues-button ${issuesTone}`}
+                onClick={() => setShowIssues(true)}
+                aria-haspopup="dialog"
+              >
+                <span className={issuesTone === "ok" ? "status-dot" : `status-dot ${issuesTone}`} />
+                검사 결과 <strong>{issuesLabel}</strong>
+              </button>
+            </div>
           </div>
           <GeometryPreview
-            model={model}
+            model={geometryModel}
             selectedSurfaceId={selected?.kind === "surface" ? selectedData.name : ""}
           />
         </aside>
-
-        <aside className="inspector">
-          <div className="inspector-heading">
-            <span>검사 결과</span>
-            <span>{issues.length}</span>
-          </div>
-          <div className="issues">
-            <div className="issue-summary">
-              <div className={errors ? "summary-icon error" : "summary-icon"}>{errors ? "!" : "✓"}</div>
-              <div>
-                <strong>{errors ? "입력을 확인해 주세요" : "치명적인 오류가 없습니다"}</strong>
-                <span>{errors} errors · {issues.length - errors} warnings</span>
-              </div>
-            </div>
-            {issues.length ? issues.map((issue, index) => (
-              <button
-                className={`issue ${issue.level}`}
-                key={`${issue.message}-${index}`}
-                onClick={() => issue.cardId && setSelectedId(issue.cardId)}
-              >
-                <span>{issue.level === "error" ? "×" : "!"}</span>
-                <div><strong>{issue.level === "error" ? "오류" : "권장 사항"}</strong><p>{issue.message}</p></div>
-              </button>
-            )) : (
-              <div className="all-clear">모든 기본 검사를 통과했습니다.</div>
-            )}
-          </div>
-        </aside>
       </section>
+
+      {showIssues && (
+        <div className="modal-veil" role="presentation" onClick={() => setShowIssues(false)}>
+          <div
+            className="issues-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="검사 결과"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="issues-modal-head">
+              <span>검사 결과</span>
+              <button aria-label="닫기" onClick={() => setShowIssues(false)}>×</button>
+            </div>
+            <div className="issues">
+              <div className="issue-summary">
+                <div className={errors ? "summary-icon error" : "summary-icon"}>{errors ? "!" : "✓"}</div>
+                <div>
+                  <strong>{errors ? "입력을 확인해 주세요" : "치명적인 오류가 없습니다"}</strong>
+                  <span>{errors} errors · {issues.length - errors} warnings</span>
+                </div>
+              </div>
+              {geometryStale && (
+                <p className="issues-stale-note">
+                  형상 관련 오류(겹침·빈틈)는 새로고침 이후 기준입니다. 방금 편집한 내용은 아직 반영되지 않았을 수 있습니다.
+                </p>
+              )}
+              {issues.length ? issues.map((issue, index) => (
+                <button
+                  className={`issue ${issue.level}`}
+                  key={`${issue.message}-${index}`}
+                  onClick={() => { if (issue.cardId) { setSelectedId(issue.cardId); setView("builder"); } setShowIssues(false); }}
+                >
+                  <span>{issue.level === "error" ? "×" : "!"}</span>
+                  <div><strong>{issue.level === "error" ? "오류" : "권장 사항"}</strong><p>{issue.message}</p></div>
+                </button>
+              )) : (
+                <div className="all-clear">모든 기본 검사를 통과했습니다.</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <footer className="statusbar">
         <div><span className={errors ? "status-light error" : "status-light"} /> {errors ? "검사 필요" : "기본 검증 통과"}</div>
