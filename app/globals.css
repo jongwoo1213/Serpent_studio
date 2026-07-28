@@ -135,11 +135,40 @@ button { color: inherit; }
 .workspace {
   min-height: 0;
   display: grid;
-  grid-template-columns: 19rem minmax(24rem, 1fr) minmax(17rem, 20vw);
+  /* 형상 미리보기 폭은 --geometry-width 로만 받는다(JS 가 인라인으로 설정).
+     이 값 자체를 인라인 grid-template-columns 로 고정하면 아래 미디어 쿼리의
+     트랙 개수 변경(사이드바·검사결과 숨김)과 어긋나 배치가 깨진다. */
+  grid-template-columns: 19rem minmax(20rem, 1fr) 0.4rem var(--geometry-width, 420px) minmax(15rem, 18vw);
+  /* 형상 미리보기를 너무 넓게 늘렸을 때 요소가 화면 밖으로 잘리는 대신 가로 스크롤이 뜨게 한다. */
+  overflow-x: auto;
 }
-.sidebar, .inspector { background: #f9fbfa; min-height: 0; }
+.sidebar, .geometry-pane, .inspector { background: #f9fbfa; min-height: 0; }
 .sidebar { display: flex; flex-direction: column; border-right: 1px solid var(--line); position: relative; }
+.geometry-pane { display: flex; flex-direction: column; min-width: 0; border-left: 1px solid var(--line); }
 .inspector { border-left: 1px solid var(--line); }
+
+/* 형상 미리보기와 검사 결과 사이를 끌어 형상 미리보기 폭을 조절하는 손잡이. */
+.pane-resizer {
+  position: relative;
+  min-width: 0;
+  background: var(--line-soft);
+  cursor: col-resize;
+  touch-action: none;
+}
+.pane-resizer::after {
+  content: "";
+  position: absolute;
+  inset: 0 -0.25rem;
+}
+.pane-resizer:hover, .pane-resizer:focus-visible, .pane-resizer.active { background: var(--green); }
+.pane-resizer:focus-visible { outline: none; }
+
+.geometry-pane-heading {
+  min-height: 3rem; display: flex; align-items: center; padding: 0 1rem;
+  border-bottom: 1px solid var(--line); background: #fbfcfb;
+  font-size: var(--fs-xs); font-weight: 800; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--muted);
+}
 .sidebar-heading, .editor-tabs, .inspector-heading {
   min-height: 3rem; display: flex; align-items: center; border-bottom: 1px solid var(--line);
 }
@@ -551,13 +580,19 @@ button { color: inherit; }
 /* --------------------------------------------------------- responsive */
 
 @media (max-width: 1250px) {
-  .workspace { grid-template-columns: 17rem minmax(22rem, 1fr) minmax(15rem, 22vw); }
+  /* 사이드바·검사결과 폭을 줄여 형상 미리보기가 계속 보이도록 여유를 만든다. */
+  .workspace {
+    grid-template-columns: 17rem minmax(20rem, 1fr) 0.4rem var(--geometry-width, 340px) minmax(14rem, 20vw);
+  }
   .card-guide { grid-template-columns: 1fr; }
   .card-guide ul, .card-guide a, .current-values { grid-column: 1; }
 }
 
 @media (max-width: 1050px) {
-  .workspace { grid-template-columns: 16rem minmax(22rem, 1fr); }
+  /* 검사결과 패널을 숨기고 남은 4개 트랙(사이드바·편집·리사이저·미리보기)만 배치한다.
+     .inspector 를 display:none 으로 지우면서 트랙 개수도 함께 4개로 맞춰야 한다 —
+     그러지 않으면 다음 트랙(미리보기)이 검사결과 자리로 밀려 들어간다. */
+  .workspace { grid-template-columns: 16rem minmax(20rem, 1fr) 0.4rem var(--geometry-width, 320px); }
   .inspector { display: none; }
   .button.ghost { padding: 0 0.55rem; }
   .console { left: 16rem; right: 0; }
@@ -571,8 +606,10 @@ button { color: inherit; }
   .topbar { grid-template-columns: 1fr auto; min-height: 3.9rem; padding: 0.6rem 0.75rem; }
   .file-pill { grid-column: 1 / -1; grid-row: 2; justify-self: stretch; min-width: 0; }
   .top-actions .button.ghost { display: none; }
+  /* 화면이 이만큼 좁으면 편집기와 미리보기를 나란히 둘 공간이 없다. 나머지 패널처럼
+     미리보기·리사이저도 접어 편집기 하나만 남긴다. */
   .workspace { min-height: 45rem; grid-template-columns: 1fr; }
-  .sidebar { display: none; }
+  .sidebar, .pane-resizer, .geometry-pane { display: none; }
   .editor-pane { min-height: 45rem; }
   .form-editor { padding: 1.5rem 1.1rem 3rem; }
   .card-guide ul { grid-template-columns: 1fr; }

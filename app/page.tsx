@@ -2,6 +2,7 @@
 
 import {
   ChangeEvent,
+  CSSProperties,
   DragEvent as ReactDragEvent,
   PointerEvent as ReactPointerEvent,
   useEffect,
@@ -671,11 +672,18 @@ const FONT_SCALE_MAX = 150;
 const FONT_SCALE_STEP = 10;
 const ROOT_FONT_SIZE = 16;
 
+const GEOMETRY_WIDTH_DEFAULT = 420;
+const GEOMETRY_WIDTH_MIN = 300;
+const GEOMETRY_WIDTH_MAX = 800;
+
 export default function Home() {
   const [source, setSource] = useState(SAMPLE_INPUT);
   const [fileName, setFileName] = useState("pwr_pin.inp");
   const [selectedId, setSelectedId] = useState<string>("");
-  const [view, setView] = useState<"builder" | "source" | "preview" | "results">("builder");
+  const [view, setView] = useState<"builder" | "source" | "results">("builder");
+  // 형상 미리보기 패널의 폭(px). 좌우 리사이저로 조절하고 다음 방문에도 기억한다.
+  const [geometryWidth, setGeometryWidth] = useState(GEOMETRY_WIDTH_DEFAULT);
+  const [resizingGeometry, setResizingGeometry] = useState(false);
   const [results, setResults] = useState<ResultCase[]>([]);
   const [referenceId, setReferenceId] = useState("");
   const [activeResultId, setActiveResultId] = useState("");
@@ -741,6 +749,11 @@ export default function Home() {
     if (savedScale >= FONT_SCALE_MIN && savedScale <= FONT_SCALE_MAX) setFontScale(savedScale);
   }, []);
 
+  useEffect(() => {
+    const savedWidth = Number(readSetting("serpent-studio-geometry-width"));
+    if (savedWidth >= GEOMETRY_WIDTH_MIN && savedWidth <= GEOMETRY_WIDTH_MAX) setGeometryWidth(savedWidth);
+  }, []);
+
   // rem 기반 스타일이므로 루트 글씨 크기를 바꾸면 여백과 패널 폭까지 함께 확대된다.
   useEffect(() => {
     document.documentElement.style.fontSize = `${(ROOT_FONT_SIZE * fontScale) / 100}px`;
@@ -751,6 +764,40 @@ export default function Home() {
     const boundedScale = Math.max(FONT_SCALE_MIN, Math.min(FONT_SCALE_MAX, nextScale));
     setFontScale(boundedScale);
     writeSetting("serpent-studio-font-scale", String(boundedScale));
+  }
+
+  /**
+   * 형상 미리보기 폭 조절 핸들. 핸들은 미리보기 패널의 왼쪽 경계에 있으므로
+   * 왼쪽으로 끌수록(clientX 감소) 패널이 넓어진다.
+   */
+  function beginGeometryResize(event: ReactPointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = geometryWidth;
+    let latestWidth = startWidth;
+    setResizingGeometry(true);
+
+    function onMove(moveEvent: PointerEvent) {
+      const next = Math.min(
+        GEOMETRY_WIDTH_MAX,
+        Math.max(GEOMETRY_WIDTH_MIN, startWidth + (startX - moveEvent.clientX)),
+      );
+      latestWidth = next;
+      setGeometryWidth(next);
+    }
+    function onUp() {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      setResizingGeometry(false);
+      writeSetting("serpent-studio-geometry-width", String(latestWidth));
+    }
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }
+
+  function resetGeometryWidth() {
+    setGeometryWidth(GEOMETRY_WIDTH_DEFAULT);
+    writeSetting("serpent-studio-geometry-width", String(GEOMETRY_WIDTH_DEFAULT));
   }
 
   function toggleGroup(group: string) {
@@ -915,7 +962,7 @@ export default function Home() {
 
   function runValidation() {
     setLogOpen(true);
-    setView("preview");
+    setView("builder");
   }
 
   return (
@@ -1022,7 +1069,15 @@ export default function Home() {
         </div>
       )}
 
-      <section className="workspace">
+      {/*
+        형상 미리보기 폭은 CSS 변수로만 넘긴다. grid-template-columns 자체를 인라인으로
+        고정하면 좁은 화면에서 사이드바·검사결과를 숨기는 아래 미디어 쿼리들과 트랙 개수가
+        어긋나 요소들이 엉뚱한 칸에 배치된다 — 트랙 배치는 항상 CSS 쪽 책임으로 남긴다.
+      */}
+      <section
+        className="workspace"
+        style={{ "--geometry-width": `${geometryWidth}px` } as CSSProperties}
+      >
         <aside className="sidebar">
           <div className="sidebar-heading">
             <span>모델 구성</span>
@@ -1110,9 +1165,6 @@ export default function Home() {
             <button className={view === "source" ? "active" : ""} onClick={() => setView("source")}>
               원문 입력
             </button>
-            <button className={view === "preview" ? "active" : ""} onClick={() => setView("preview")}>
-              형상 미리보기
-            </button>
             <button className={view === "results" ? "active" : ""} onClick={() => setView("results")}>
               결과 분석
               {results.length > 0 && <span className="tab-count">{results.length}</span>}
@@ -1133,11 +1185,6 @@ export default function Home() {
               onRemove={removeResult}
               linkedInput={inputFor}
               onOpenLinkedInput={(file) => { loadInput(file); setView("builder"); }}
-            />
-          ) : view === "preview" ? (
-            <GeometryPreview
-              model={model}
-              selectedSurfaceId={selected?.kind === "surface" ? selectedData.name : ""}
             />
           ) : view === "source" ? (
             <div className="source-editor">
@@ -1259,6 +1306,35 @@ export default function Home() {
             <div className="empty-state">편집할 카드를 선택하세요.</div>
           )}
         </section>
+
+        <div
+          className={resizingGeometry ? "pane-resizer active" : "pane-resizer"}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="형상 미리보기 폭 조절"
+          aria-valuenow={geometryWidth}
+          aria-valuemin={GEOMETRY_WIDTH_MIN}
+          aria-valuemax={GEOMETRY_WIDTH_MAX}
+          tabIndex={0}
+          onPointerDown={beginGeometryResize}
+          onDoubleClick={resetGeometryWidth}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowLeft") setGeometryWidth((width) => Math.min(GEOMETRY_WIDTH_MAX, width + 24));
+            else if (event.key === "ArrowRight") setGeometryWidth((width) => Math.max(GEOMETRY_WIDTH_MIN, width - 24));
+            else return;
+            event.preventDefault();
+          }}
+        />
+
+        <aside className="geometry-pane" aria-label="형상 미리보기">
+          <div className="geometry-pane-heading">
+            <span>형상 미리보기</span>
+          </div>
+          <GeometryPreview
+            model={model}
+            selectedSurfaceId={selected?.kind === "surface" ? selectedData.name : ""}
+          />
+        </aside>
 
         <aside className="inspector">
           <div className="inspector-heading">
