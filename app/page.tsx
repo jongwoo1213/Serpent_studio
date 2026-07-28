@@ -30,6 +30,7 @@ import {
   serializeCards,
   SerpentCard,
   updateCard,
+  ValidationIssue,
   validateSerpentInput,
   VOID_COLOR,
 } from "../lib/serpent";
@@ -713,7 +714,7 @@ export default function Home() {
   const geometryModel = useMemo(() => parseGeometryModel(geometryCards), [geometryCards]);
   const geometryStale = source !== geometrySource;
 
-  // 셀 이름 → 카드 id. 형상 진단 결과에서 문제가 된 셀 카드로 바로 이동할 수 있게 한다.
+  // 셀 이름 → 카드 id. 형상 진단이 지목한 셀 카드로 바로 이동할 때 쓴다.
   const cellCardIds = useMemo(() => {
     const map = new Map<string, string>();
     for (const card of cards) {
@@ -725,9 +726,15 @@ export default function Home() {
   }, [cards]);
 
   const syntaxIssues = useMemo(() => validateSerpentInput(cards), [cards]);
-  // 겹침/빈틈 진단은 형상 표본검사를 그대로 재사용하므로 geometryModel 이 갱신될 때만 다시 돈다.
-  const geometryIssues = useMemo(() => diagnoseGeometry(geometryModel, cellCardIds), [geometryModel, cellCardIds]);
+  // 겹침/빈틈 진단은 형상 표본검사와 같은 비용이 드므로 새로고침된 스냅샷에서만 다시 돈다.
+  // 카드 id 를 넘기지 않는 이유는 그 map 이 타이핑마다 새로 만들어져 이 memo 를 깨뜨리기 때문이다.
+  const geometryIssues = useMemo(() => diagnoseGeometry(geometryModel), [geometryModel]);
   const issues = useMemo(() => [...syntaxIssues, ...geometryIssues], [syntaxIssues, geometryIssues]);
+
+  /** 진단이 남긴 셀 이름을 지금 카드 목록에서 찾아 준다. */
+  function issueCardId(issue: ValidationIssue) {
+    return issue.cardId ?? (issue.cellName ? cellCardIds.get(issue.cellName) : undefined);
+  }
 
   const selected = cards.find((card) => card.id === selectedId) ?? cards.find((card) => card.kind === "surface") ?? cards[0];
   const selectedData = selected ? getCardData(selected) : {};
@@ -1415,7 +1422,11 @@ export default function Home() {
                 <button
                   className={`issue ${issue.level}`}
                   key={`${issue.message}-${index}`}
-                  onClick={() => { if (issue.cardId) { setSelectedId(issue.cardId); setView("builder"); } setShowIssues(false); }}
+                  onClick={() => {
+                    const cardId = issueCardId(issue);
+                    if (cardId) { setSelectedId(cardId); setView("builder"); }
+                    setShowIssues(false);
+                  }}
                 >
                   <span>{issue.level === "error" ? "×" : "!"}</span>
                   <div><strong>{issue.level === "error" ? "오류" : "권장 사항"}</strong><p>{issue.message}</p></div>

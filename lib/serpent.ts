@@ -23,6 +23,12 @@ export type ValidationIssue = {
   level: "error" | "warning";
   message: string;
   cardId?: string;
+  /**
+   * 형상 진단이 지목한 셀 이름. 형상 진단은 새로고침 시점의 스냅샷에서 도는 반면
+   * 카드 목록은 편집할 때마다 바뀌므로, 카드 id 대신 이름만 남기고 클릭하는 순간
+   * 현재 카드 목록에서 다시 찾는다.
+   */
+  cellName?: string;
 };
 
 const CARD_KEYWORDS = new Set([
@@ -362,11 +368,25 @@ export type GeometrySurface = {
 export type RegionNode =
   | { op: "always" }
   | { op: "never" }
-  | { op: "surface"; name: string; positive: boolean }
+  /**
+   * `surface` 는 파싱 직후에는 이름만 들고 있다가, 모든 카드를 읽은 뒤 실제 표면 객체가
+   * 채워진다. 픽셀마다 문자열 키로 Map 을 뒤지지 않기 위한 것이다.
+   */
+  | { op: "surface"; name: string; positive: boolean; surface?: GeometrySurface }
   | { op: "cell"; name: string }
   | { op: "not"; node: RegionNode }
   | { op: "and"; nodes: RegionNode[] }
   | { op: "or"; nodes: RegionNode[] };
+
+/**
+ * 셀을 감싸는 축 정렬 상자. 실제 영역보다 항상 크거나 같게(보수적으로) 잡는다.
+ * 픽셀마다 모든 셀의 영역식을 평가하는 대신, 상자 밖의 점을 먼저 걸러내는 데 쓴다.
+ */
+export type Bounds3 = {
+  xMin: number; xMax: number;
+  yMin: number; yMax: number;
+  zMin: number; zMax: number;
+};
 
 export type GeometryCell = {
   id: string;
@@ -374,6 +394,8 @@ export type GeometryCell = {
   material: string;
   fill: string;
   region: RegionNode;
+  /** 영역식에서 유도한 보수적 경계 상자. 이 밖이면 영역식을 평가할 필요가 없다. */
+  bounds: Bounds3;
 };
 
 export type PinLayer = {
@@ -542,6 +564,8 @@ export function parseGeometryModel(cards: SerpentCard[]): GeometryModel {
         material,
         fill,
         region: parseRegion(region),
+        // 표면은 셀보다 뒤에 정의될 수 있으므로 경계 상자는 모든 카드를 읽은 뒤 채운다.
+        bounds: UNBOUNDED,
       });
     }
 
@@ -558,6 +582,13 @@ export function parseGeometryModel(cards: SerpentCard[]): GeometryModel {
       }
       pins.set(parts[1], layers);
     }
+  }
+
+  // 표면은 셀보다 뒤에 정의될 수 있으므로, 모든 카드를 읽은 지금 참조를 연결하고
+  // 경계 상자를 계산한다. 둘 다 픽셀마다 도는 경로의 비용을 미리 걷어내기 위한 것이다.
+  for (const cell of cells) {
+    resolveSurfaces(cell.region, surfaces);
+    cell.bounds = regionBounds(cell.region, surfaces);
   }
 
   const cellsByUniverse = new Map<string, GeometryCell[]>();
@@ -579,6 +610,144 @@ export function materialColor(
   return model.materials.get(name)?.color ?? [126, 145, 137];
 }
 
+/** 영역식의 표면 참조를 실제 표면 객체로 연결한다. 픽셀마다 하던 Map 조회를 없앤다. */
+function resolveSurfaces(node: RegionNode, surfaces: Map<string, GeometrySurface>) {
+  switch (node.op) {
+    case "surface":
+      node.surface = surfaces.get(node.name);
+      return;
+    case "not":
+      resolveSurfaces(node.node, surfaces);
+      return;
+    case "and":
+    case "or":
+      for (const item of node.nodes) resolveSurfaces(item, surfaces);
+      return;
+    default:
+      return;
+  }
+}
+
+const UNBOUNDED: Bounds3 = {
+  xMin: -Infinity, xMax: Infinity,
+  yMin: -Infinity, yMax: Infinity,
+  zMin: -Infinity, zMax: Infinity,
+};
+
+/** 어떤 점도 포함하지 않는 상자. `never` 영역에 쓴다. */
+const EMPTY_BOUNDS: Bounds3 = {
+  xMin: Infinity, xMax: -Infinity,
+  yMin: Infinity, yMax: -Infinity,
+  zMin: Infinity, zMax: -Infinity,
+};
+
+function intersectBounds(a: Bounds3, b: Bounds3): Bounds3 {
+  return {
+    xMin: Math.max(a.xMin, b.xMin), xMax: Math.min(a.xMax, b.xMax),
+    yMin: Math.max(a.yMin, b.yMin), yMax: Math.min(a.yMax, b.yMax),
+    zMin: Math.max(a.zMin, b.zMin), zMax: Math.min(a.zMax, b.zMax),
+  };
+}
+
+function unionBounds(a: Bounds3, b: Bounds3): Bounds3 {
+  return {
+    xMin: Math.min(a.xMin, b.xMin), xMax: Math.max(a.xMax, b.xMax),
+    yMin: Math.min(a.yMin, b.yMin), yMax: Math.max(a.yMax, b.yMax),
+    zMin: Math.min(a.zMin, b.zMin), zMax: Math.max(a.zMax, b.zMax),
+  };
+}
+
+/**
+ * 표면의 한쪽 면(안/밖)을 감싸는 상자.
+ *
+ * 안쪽(value < 0)은 원통·구·정사각기둥처럼 유한하게 감쌀 수 있는 경우가 많지만,
+ * 바깥쪽(value > 0)은 평면을 제외하면 무한하다. 조금이라도 확신이 없으면 무한대를
+ * 돌려준다 — 상자가 실제 영역보다 크기만 하면 걸러내기는 언제나 안전하다.
+ */
+function surfaceSideBounds(surface: GeometrySurface, positive: boolean): Bounds3 {
+  const v = surface.values;
+  const at = (index: number) => v[index] ?? 0;
+
+  if (positive) {
+    // 평면의 바깥쪽만 반쪽 공간으로 제한할 수 있다.
+    if (surface.type === "px") return { ...UNBOUNDED, xMin: at(0) };
+    if (surface.type === "py") return { ...UNBOUNDED, yMin: at(0) };
+    if (surface.type === "pz") return { ...UNBOUNDED, zMin: at(0) };
+    return UNBOUNDED;
+  }
+
+  if (surface.type === "px") return { ...UNBOUNDED, xMax: at(0) };
+  if (surface.type === "py") return { ...UNBOUNDED, yMax: at(0) };
+  if (surface.type === "pz") return { ...UNBOUNDED, zMax: at(0) };
+
+  if (surface.type === "cyl" || surface.type === "cylz") {
+    const r = v.at(-1) ?? 0;
+    if (!Number.isFinite(r)) return UNBOUNDED;
+    return { ...UNBOUNDED, xMin: at(0) - r, xMax: at(0) + r, yMin: at(1) - r, yMax: at(1) + r };
+  }
+  if (surface.type === "sqc") {
+    const h = v.at(-1) ?? 0;
+    if (!Number.isFinite(h)) return UNBOUNDED;
+    return { ...UNBOUNDED, xMin: at(0) - h, xMax: at(0) + h, yMin: at(1) - h, yMax: at(1) + h };
+  }
+  if (surface.type === "sph") {
+    const r = at(3);
+    if (!Number.isFinite(r)) return UNBOUNDED;
+    return {
+      xMin: at(0) - r, xMax: at(0) + r,
+      yMin: at(1) - r, yMax: at(1) + r,
+      zMin: at(2) - r, zMax: at(2) + r,
+    };
+  }
+  if (surface.type === "pad") {
+    // 안쪽은 바깥 반지름 안에 반드시 들어간다. 각도 범위는 무시해도 보수적이다.
+    const outer = at(3);
+    if (!Number.isFinite(outer)) return UNBOUNDED;
+    return { ...UNBOUNDED, xMin: at(0) - outer, xMax: at(0) + outer, yMin: at(1) - outer, yMax: at(1) + outer };
+  }
+  return UNBOUNDED;
+}
+
+/**
+ * 영역식에서 보수적인 경계 상자를 유도한다.
+ *
+ * `not`과 다른 셀 참조는 뒤집힌 영역을 정확히 감쌀 수 없으므로 무한대로 둔다.
+ * 실제 영역이 상자 안에 반드시 들어가기만 하면 되므로 이렇게 두어도 정확도는 잃지 않는다.
+ */
+function regionBounds(node: RegionNode, surfaces: Map<string, GeometrySurface>): Bounds3 {
+  switch (node.op) {
+    case "always":
+      return UNBOUNDED;
+    case "never":
+      return EMPTY_BOUNDS;
+    case "surface": {
+      const surface = surfaces.get(node.name);
+      return surface ? surfaceSideBounds(surface, node.positive) : UNBOUNDED;
+    }
+    case "and":
+      return node.nodes.reduce<Bounds3>(
+        (acc, item) => intersectBounds(acc, regionBounds(item, surfaces)),
+        UNBOUNDED,
+      );
+    case "or":
+      return node.nodes.reduce<Bounds3>(
+        (acc, item) => unionBounds(acc, regionBounds(item, surfaces)),
+        EMPTY_BOUNDS,
+      );
+    case "not":
+    case "cell":
+      return UNBOUNDED;
+  }
+}
+
+function withinBounds(bounds: Bounds3, x: number, y: number, z: number) {
+  return (
+    x >= bounds.xMin && x <= bounds.xMax &&
+    y >= bounds.yMin && y <= bounds.yMax &&
+    z >= bounds.zMin && z <= bounds.zMax
+  );
+}
+
 function angleInRange(angle: number, start: number, end: number) {
   const normalized = ((angle % 360) + 360) % 360;
   const a = ((start % 360) + 360) % 360;
@@ -588,11 +757,13 @@ function angleInRange(angle: number, start: number, end: number) {
 
 function surfaceValue(surface: GeometrySurface, x: number, y: number, z: number) {
   const v = surface.values;
+  // 픽셀마다 도는 경로이므로 v.at(-1) 같은 메서드 호출 대신 첨자로 읽는다.
+  const last = v.length ? v[v.length - 1] ?? 0 : 0;
   if (surface.type === "cyl" || surface.type === "cylz") {
-    return Math.hypot(x - (v[0] ?? 0), y - (v[1] ?? 0)) - (v.at(-1) ?? 0);
+    return Math.hypot(x - (v[0] ?? 0), y - (v[1] ?? 0)) - last;
   }
   if (surface.type === "sqc") {
-    return Math.max(Math.abs(x - (v[0] ?? 0)), Math.abs(y - (v[1] ?? 0))) - (v.at(-1) ?? 0);
+    return Math.max(Math.abs(x - (v[0] ?? 0)), Math.abs(y - (v[1] ?? 0))) - last;
   }
   if (surface.type === "sph") {
     return Math.hypot(
@@ -631,10 +802,20 @@ function evaluateRegion(
       return true;
     case "never":
       return false;
-    case "and":
-      return node.nodes.every((item) => evaluateRegion(item, model, universe, x, y, z));
-    case "or":
-      return node.nodes.some((item) => evaluateRegion(item, model, universe, x, y, z));
+    // every/some 대신 평범한 반복문을 쓴다. 픽셀마다 도는 경로라 노드마다 콜백을
+    // 새로 만드는 비용이 그대로 렌더 시간에 쌓인다.
+    case "and": {
+      for (const item of node.nodes) {
+        if (!evaluateRegion(item, model, universe, x, y, z)) return false;
+      }
+      return true;
+    }
+    case "or": {
+      for (const item of node.nodes) {
+        if (evaluateRegion(item, model, universe, x, y, z)) return true;
+      }
+      return false;
+    }
     case "not":
       return !evaluateRegion(node.node, model, universe, x, y, z);
     case "cell": {
@@ -642,7 +823,7 @@ function evaluateRegion(
       return target ? evaluateRegion(target.region, model, universe, x, y, z) : false;
     }
     case "surface": {
-      const surface = model.surfaces.get(node.name);
+      const surface = node.surface;
       if (!surface) return false;
       const value = surfaceValue(surface, x, y, z);
       return node.positive ? value > 0 : value < 0;
@@ -682,6 +863,8 @@ function materialInUniverse(
 
   for (const cell of model.cellsByUniverse.get(universe) ?? []) {
     if (cell.material === "outside") continue;
+    // 경계 상자 밖이면 영역식을 평가할 필요가 없다. 픽셀마다 도는 경로라 이 한 줄이 크다.
+    if (!withinBounds(cell.bounds, x, y, z)) continue;
     if (!cellContains(model, cell, x, y, z)) continue;
     if (cell.fill) return materialInUniverse(model, cell.fill, x, y, z, depth + 1);
     return cell.material;
@@ -737,6 +920,7 @@ function classifyInUniverse(
   let first: GeometryCell | null = null;
   let overlap: string[] = NO_OVERLAP;
   for (const cell of model.cellsByUniverse.get(universe) ?? []) {
+    if (!withinBounds(cell.bounds, x, y, z)) continue;
     if (!cellContains(model, cell, x, y, z)) continue;
     if (!first) {
       first = cell;
@@ -779,10 +963,7 @@ function formatPoint(x: number, y: number, z: number) {
  * 형상 공간에 격자점을 뿌려 셀 겹침과 빈틈을 찾는다.
  * Serpent는 겹침을 조용히 넘기고 빈틈은 실행 중에야 오류를 내므로, 실행 전에 미리 잡아 준다.
  */
-export function diagnoseGeometry(
-  model: GeometryModel,
-  cellCardIds?: Map<string, string>,
-): ValidationIssue[] {
+export function diagnoseGeometry(model: GeometryModel): ValidationIssue[] {
   if (!model.cells.length) return [];
 
   const xyBounds = geometryPlotBounds(model, "xy");
@@ -836,7 +1017,7 @@ export function diagnoseGeometry(
       message: sameMaterial
         ? `셀 ${names.join(", ")}이(가) 겹칩니다 (예: ${point}). 물질이 같아 결과는 같지만 영역식을 정리하는 것이 좋습니다.`
         : `셀 ${names.join(", ")}이(가) 겹칩니다 (예: ${point}). Serpent는 오류 없이 먼저 정의된 '${winner}'만 사용하므로 결과가 조용히 달라집니다.`,
-      cardId: cellCardIds?.get(winner),
+      cellName: winner,
     });
   }
 
