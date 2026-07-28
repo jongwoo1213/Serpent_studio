@@ -44,6 +44,8 @@ export type ResultCase = {
   /** 화면에 쓸 짧은 이름. */
   label: string;
   fileName: string;
+  /** 같은 폴더의 입력문과 짝지을 때 쓰는 디렉터리 경로. */
+  dir: string;
   entries: Map<string, ResultEntry>;
 
   version: string;
@@ -315,13 +317,14 @@ function shortLabel(inputName: string, fileName: string) {
   return parts.length > 5 ? parts.slice(-6).join("_") : base;
 }
 
-export function buildResultCase(fileName: string, text_: string, id: string): ResultCase {
+export function buildResultCase(fileName: string, text_: string, id: string, dir = ""): ResultCase {
   const entries = parseResultFile(text_);
 
   const base: ResultCase = {
     id,
     label: fileName,
     fileName,
+    dir,
     entries,
     version: "",
     inputName: "",

@@ -79,7 +79,9 @@ button { color: inherit; }
   z-index: 10;
 }
 
-.brand { display: flex; align-items: center; gap: 0.7rem; }
+.brand { display: flex; align-items: center; gap: 0.7rem; min-width: 0; }
+.brand > div:not(.brand-mark) { min-width: 0; }
+.brand strong, .brand span { white-space: nowrap; }
 .brand-mark {
   width: 2.1rem; height: 2.35rem; border-radius: 0.3rem 0.7rem 0.3rem 0.7rem;
   display: grid; place-items: center; background: var(--green);
@@ -102,6 +104,8 @@ button { color: inherit; }
 .icon { display: inline-grid; min-width: 1rem; place-items: center; font-size: var(--fs-sm); }
 
 .top-actions { display: flex; align-items: center; gap: 0.45rem; }
+/* 상단이 좁아지면 로고는 남기고 글자만 접는다. */
+@media (max-width: 1280px) { .brand > div:not(.brand-mark) { display: none; } }
 .font-size-control {
   display: inline-flex; align-items: stretch; height: 2.1rem; overflow: hidden;
   border: 1px solid var(--line); border-radius: var(--radius-sm); background: white;
@@ -996,3 +1000,98 @@ button { color: inherit; }
 .spectrum-table-wrap { max-height: 18rem; overflow-y: auto; }
 .spectrum-table td, .spectrum-table th { padding: 0.25rem 0.5rem; }
 .spectrum-table td:first-child { display: table-cell; text-align: right; }
+
+/* ── 입력문 ↔ 결과문 연동 ─────────────────────────────────────── */
+
+/* app-shell 은 3행 그리드라 배너를 흐름에 넣으면 행이 깨진다. 겹쳐서 띄운다. */
+.link-notice {
+  position: absolute;
+  bottom: 2.5rem;
+  left: 50%;
+  z-index: 20;
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  max-width: min(46rem, 90vw);
+  padding: 0.5rem 0.5rem 0.5rem 0.875rem;
+  transform: translateX(-50%);
+  border: 1px solid var(--green);
+  border-radius: 999px;
+  background: var(--green-tint);
+  box-shadow: var(--shadow);
+  color: var(--green-deep);
+  font-size: var(--fs-xs);
+}
+
+.link-notice button {
+  padding: 0 0.375rem;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--green-deep);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+.link-notice button:hover { background: var(--mint); }
+
+.app-shell { position: relative; }
+
+.drop-veil {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  background: rgba(15, 92, 78, 0.14);
+  backdrop-filter: blur(2px);
+}
+
+.drop-veil > div {
+  padding: 1.5rem 2rem;
+  border: 2px dashed var(--green);
+  border-radius: var(--radius);
+  background: var(--panel);
+  text-align: center;
+}
+
+.drop-veil strong { display: block; color: var(--green-deep); font-size: var(--fs-md); }
+.drop-veil span { color: var(--muted); font-size: var(--fs-xs); }
+
+.results-head-side {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 0.375rem;
+  align-items: flex-end;
+}
+
+.linked-input {
+  display: inline-flex;
+  gap: 0.3125rem;
+  align-items: center;
+  max-width: 16rem;
+  padding: 0.25rem 0.5rem;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.linked-input:hover { border-color: var(--green); color: var(--green-deep); background: var(--green-tint); }
+
+.link-missing { color: var(--muted-soft); font-size: var(--fs-micro); }
+
+.result-tab-dir {
+  padding: 0 0.3125rem;
+  border-radius: 999px;
+  background: var(--mint);
+  color: var(--muted);
+  font-size: var(--fs-micro);
+}

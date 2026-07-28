@@ -2,6 +2,7 @@
 
 import {
   ChangeEvent,
+  DragEvent as ReactDragEvent,
   PointerEvent as ReactPointerEvent,
   useEffect,
   useMemo,
@@ -37,6 +38,13 @@ import {
   formatNumber,
   ResultCase,
 } from "../lib/results";
+import {
+  IngestedFile,
+  ingest,
+  pairKey,
+  readDropped,
+  readFiles,
+} from "../lib/pairing";
 
 const GROUPS = [
   { name: "모델 개요", icon: "▤", hint: "계산 사례를 식별하는 제목 카드" },
@@ -670,13 +678,21 @@ export default function Home() {
   const [view, setView] = useState<"builder" | "source" | "preview" | "results">("builder");
   const [results, setResults] = useState<ResultCase[]>([]);
   const [referenceId, setReferenceId] = useState("");
+  const [activeResultId, setActiveResultId] = useState("");
   const [fontScale, setFontScale] = useState(100);
   const [showAdd, setShowAdd] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [collapsedGroups, setCollapsedGroups] = useState<string[]>([]);
+  // 결과문에서 짝을 찾아 열 수 있도록, 함께 들어온 입력문을 pairKey 로 들고 있는다.
+  const [inputLibrary, setInputLibrary] = useState<Map<string, IngestedFile>>(new Map());
+  const [linkNotice, setLinkNotice] = useState("");
+  const [dropping, setDropping] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const resultInput = useRef<HTMLInputElement>(null);
+  const folderInput = useRef<HTMLInputElement>(null);
+  /** 우리가 마지막으로 넣어준 입력문. 사용자가 손댄 편집을 덮어쓰지 않기 위해 비교용으로 쓴다. */
+  const loadedSource = useRef(SAMPLE_INPUT);
 
   const cards = useMemo(() => parseSerpentInput(source), [source]);
   const model = useMemo(() => parseGeometryModel(cards), [cards]);
@@ -763,46 +779,114 @@ export default function Home() {
     setView("builder");
   }
 
-  function openFile(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      setSource(String(reader.result ?? ""));
-      setFileName(file.name);
-      setSelectedId("");
-    };
-    reader.readAsText(file);
-    event.target.value = "";
+  /** 우리가 넣어준 뒤로 사용자가 편집하지 않았다면 갈아끼워도 안전하다. */
+  function sourceIsUntouched() {
+    return source === loadedSource.current;
   }
 
-  // 결과 파일은 여러 개를 한꺼번에 받는다. 제어드럼처럼 배치를 바꿔가며 돌린
-  // 캠페인에서는 개별 keff 보다 기준 케이스 대비 Δρ 가 실제 산출물이기 때문이다.
-  async function openResults(event: ChangeEvent<HTMLInputElement>) {
+  function loadInput(file: IngestedFile) {
+    loadedSource.current = file.text;
+    setSource(file.text);
+    setFileName(file.name);
+    setSelectedId("");
+  }
+
+  /**
+   * 고르거나 끌어다 놓은 파일을 한 경로로 처리한다.
+   *
+   * 결과문과 입력문을 내용으로 구분한 뒤 이름이 같은 것끼리 이어 준다.
+   * 결과문만 들어오면 결과 탭을, 입력문만 들어오면 편집 화면을 연다.
+   */
+  async function ingestFiles(files: IngestedFile[]) {
+    const batch = ingest(files);
+    if (!batch.results.length && !batch.inputs.length) {
+      setLinkNotice("Serpent 입력문이나 결과문(_res.m)을 찾지 못했습니다.");
+      return;
+    }
+
+    // 같은 이름의 입력문을 계속 들고 있어야 결과 탭을 옮길 때도 짝을 찾을 수 있다.
+    const library = new Map(inputLibrary);
+    for (const [key, file] of batch.inputByKey) library.set(key, file);
+    setInputLibrary(library);
+
+    let linked = 0;
+    if (batch.results.length) {
+      const stamp = Date.now();
+      const loaded = batch.results.map((file, index) =>
+        buildResultCase(file.name, file.text, `${stamp}-${index}-${file.name}`, file.dir),
+      );
+      for (const file of batch.results) {
+        if (library.has(pairKey(file, "result"))) linked += 1;
+      }
+      setResults((current) => {
+        const kept = current.filter((item) => !loaded.some((next) => next.fileName === item.fileName));
+        const merged = [...kept, ...loaded];
+        setReferenceId((id) => (merged.some((item) => item.id === id) ? id : merged[0]?.id ?? ""));
+        return merged;
+      });
+      setActiveResultId(loaded[0].id);
+    } else {
+      // 입력문만 들어온 경우, 이미 열려 있는 결과 중 같은 이름이 있으면 그 탭으로 옮긴다.
+      const match = results.find((item) =>
+        batch.inputs.some((file) => pairKey(file, "input") === pairKey({ name: item.fileName, dir: item.dir, text: "" }, "result")),
+      );
+      if (match) {
+        setActiveResultId(match.id);
+        linked += 1;
+      }
+    }
+
+    // 결과문의 짝이 있으면 그 입력문을, 없으면 그냥 첫 입력문을 연다.
+    const paired = batch.results.map((file) => library.get(pairKey(file, "result"))).find(Boolean);
+    const toOpen = paired ?? batch.inputs[0];
+    if (toOpen && (sourceIsUntouched() || !batch.results.length)) loadInput(toOpen);
+
+    setView(batch.results.length ? "results" : "builder");
+    setLinkNotice(
+      batch.results.length && batch.inputs.length
+        ? `결과문 ${batch.results.length}개 · 입력문 ${batch.inputs.length}개를 불러와 ${linked}개를 이름으로 연결했습니다.`
+        : batch.results.length
+          ? `결과문 ${batch.results.length}개를 불러왔습니다. 짝이 되는 입력문이 함께 선택되지 않아 연결하지 못했습니다.`
+          : linked
+            ? `입력문을 불러오고 이름이 같은 결과문에 연결했습니다.`
+            : `입력문 ${batch.inputs.length}개를 불러왔습니다.`,
+    );
+  }
+
+  async function onPickFiles(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
     event.target.value = "";
-    if (!files.length) return;
+    if (files.length) await ingestFiles(await readFiles(files));
+  }
 
-    const loaded = await Promise.all(
-      files.map(async (file, index) =>
-        buildResultCase(file.name, await file.text(), `${Date.now()}-${index}-${file.name}`),
-      ),
-    );
+  async function onDrop(event: ReactDragEvent<HTMLElement>) {
+    event.preventDefault();
+    setDropping(false);
+    const files = await readDropped(event.dataTransfer.items);
+    if (files.length) await ingestFiles(files);
+  }
 
-    setResults((current) => {
-      // 같은 파일을 다시 열면 갈아끼운다.
-      const kept = current.filter((item) => !loaded.some((next) => next.fileName === item.fileName));
-      const merged = [...kept, ...loaded];
-      setReferenceId((id) => (merged.some((item) => item.id === id) ? id : merged[0]?.id ?? ""));
-      return merged;
-    });
-    setView("results");
+  /** 결과 케이스에 짝지어진 입력문을 찾는다. */
+  function inputFor(item: ResultCase) {
+    return inputLibrary.get(pairKey({ name: item.fileName, dir: item.dir, text: "" }, "result"));
+  }
+
+  /**
+   * 결과 탭을 옮기면 짝지어진 입력문도 따라 열어 준다.
+   * 단 사용자가 편집 중이던 내용은 말없이 덮어쓰지 않는다.
+   */
+  function pickActiveResult(id: string) {
+    setActiveResultId(id);
+    const item = results.find((entry) => entry.id === id);
+    const paired = item && inputFor(item);
+    if (paired && paired.text !== source && sourceIsUntouched()) loadInput(paired);
   }
 
   function removeResult(id: string) {
     setResults((current) => {
       const next = current.filter((item) => item.id !== id);
       setReferenceId((currentId) => (next.some((item) => item.id === currentId) ? currentId : next[0]?.id ?? ""));
+      setActiveResultId((currentId) => (next.some((item) => item.id === currentId) ? currentId : next[0]?.id ?? ""));
       return next;
     });
   }
@@ -822,7 +906,20 @@ export default function Home() {
   }
 
   return (
-    <main className="app-shell">
+    <main
+      className={dropping ? "app-shell dropping" : "app-shell"}
+      onDragOver={(event) => { event.preventDefault(); setDropping(true); }}
+      onDragLeave={(event) => { if (event.currentTarget === event.target) setDropping(false); }}
+      onDrop={onDrop}
+    >
+      {dropping && (
+        <div className="drop-veil" aria-hidden="true">
+          <div>
+            <strong>여기에 놓으세요</strong>
+            <span>폴더를 놓으면 이름이 같은 입력문과 결과문을 자동으로 연결합니다.</span>
+          </div>
+        </div>
+      )}
       <header className="topbar">
         <div className="brand">
           <div className="brand-mark">S</div>
@@ -869,8 +966,9 @@ export default function Home() {
             ref={fileInput}
             type="file"
             aria-label="SERPENT 입력문 선택"
+            multiple
             hidden
-            onChange={openFile}
+            onChange={onPickFiles}
           />
           <input
             ref={resultInput}
@@ -879,13 +977,29 @@ export default function Home() {
             accept=".m,text/plain"
             multiple
             hidden
-            onChange={openResults}
+            onChange={onPickFiles}
+          />
+          <input
+            ref={folderInput}
+            type="file"
+            aria-label="계산 폴더 선택"
+            hidden
+            // 폴더째 받아야 같은 이름의 입력문과 결과문을 짝지을 수 있다.
+            {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
+            onChange={onPickFiles}
           />
           <button className="button ghost" onClick={() => fileInput.current?.click()}>
             <Icon>↥</Icon> 열기
           </button>
           <button className="button ghost" onClick={() => resultInput.current?.click()}>
             <Icon>◫</Icon> 결과 열기
+          </button>
+          <button
+            className="button ghost"
+            title="폴더를 통째로 열면 이름이 같은 입력문과 결과문을 자동으로 연결합니다"
+            onClick={() => folderInput.current?.click()}
+          >
+            <Icon>▤</Icon> 폴더 열기
           </button>
           <button className="button ghost" onClick={downloadInput}>
             <Icon>↓</Icon> 내보내기
@@ -895,6 +1009,13 @@ export default function Home() {
           </button>
         </div>
       </header>
+
+      {linkNotice && (
+        <div className="link-notice" role="status">
+          <span>{linkNotice}</span>
+          <button aria-label="안내 닫기" onClick={() => setLinkNotice("")}>×</button>
+        </div>
+      )}
 
       <section className="workspace">
         <aside className="sidebar">
@@ -1000,9 +1121,13 @@ export default function Home() {
             <ResultsPanel
               cases={results}
               referenceId={referenceId}
+              activeId={activeResultId}
+              onPickActive={pickActiveResult}
               onPickReference={setReferenceId}
               onOpen={() => resultInput.current?.click()}
               onRemove={removeResult}
+              linkedInput={inputFor}
+              onOpenLinkedInput={(file) => { loadInput(file); setView("builder"); }}
             />
           ) : view === "preview" ? (
             <GeometryPreview
@@ -2162,18 +2287,24 @@ function SpectrumChart({ bins }: { bins: ResultCase["spectrum"] }) {
 function ResultsPanel({
   cases,
   referenceId,
+  activeId,
+  onPickActive,
   onPickReference,
   onOpen,
   onRemove,
+  linkedInput,
+  onOpenLinkedInput,
 }: {
   cases: ResultCase[];
   referenceId: string;
+  activeId: string;
+  onPickActive: (id: string) => void;
   onPickReference: (id: string) => void;
   onOpen: () => void;
   onRemove: (id: string) => void;
+  linkedInput: (item: ResultCase) => IngestedFile | undefined;
+  onOpenLinkedInput: (file: IngestedFile) => void;
 }) {
-  const [activeId, setActiveId] = useState("");
-
   const valid = useMemo(() => cases.filter((item) => !item.error), [cases]);
   const active = valid.find((item) => item.id === activeId) ?? valid[0];
   const worth = buildWorthTable(valid, referenceId);
@@ -2210,11 +2341,13 @@ function ResultsPanel({
               role="tab"
               aria-selected={active?.id === item.id}
               className={`result-tab ${active?.id === item.id ? "active" : ""} ${item.error ? "broken" : item.worstStatus}`}
-              onClick={() => setActiveId(item.id)}
-              title={item.fileName}
+              onClick={() => onPickActive(item.id)}
+              title={item.dir ? `${item.dir}/${item.fileName}` : item.fileName}
             >
               <span className={`status-dot ${item.error ? "bad" : item.worstStatus}`} />
               <span className="result-tab-name">{item.label}</span>
+              {/* 폴더가 다르면 이름이 겹칠 수 있으므로 마지막 폴더를 함께 보여준다. */}
+              {item.dir && <span className="result-tab-dir">{item.dir.split("/").pop()}</span>}
               <span
                 className="result-tab-close"
                 role="button"
@@ -2243,9 +2376,20 @@ function ResultsPanel({
                 {active.runningTime !== undefined && ` · ${(active.runningTime / 60).toFixed(1)}분 소요`}
               </p>
             </div>
-            <span className={`health-badge ${active.worstStatus}`}>
-              {active.worstStatus === "ok" ? "검증 통과" : active.worstStatus === "warn" ? "확인 필요" : "결과 사용 주의"}
-            </span>
+            <div className="results-head-side">
+              <span className={`health-badge ${active.worstStatus}`}>
+                {active.worstStatus === "ok" ? "검증 통과" : active.worstStatus === "warn" ? "확인 필요" : "결과 사용 주의"}
+              </span>
+              {(() => {
+                const paired = linkedInput(active);
+                if (!paired) return <span className="link-missing">연결된 입력문 없음</span>;
+                return (
+                  <button className="linked-input" onClick={() => onOpenLinkedInput(paired)}>
+                    <Icon>▤</Icon> {paired.name}
+                  </button>
+                );
+              })()}
+            </div>
           </header>
 
           <section className="metric-row" aria-label="핵심 결과">
