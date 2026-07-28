@@ -309,9 +309,16 @@ function buildSpectrum(entries: Map<string, ResultEntry>): SpectrumBin[] {
   return bins.some((bin) => bin.perLethargy > 0) ? bins : [];
 }
 
-/** 파일 이름에서 케이스를 구분할 만한 짧은 라벨을 뽑는다. */
+/**
+ * 탭에 쓸 짧은 라벨을 만든다.
+ *
+ * res.m 안의 INPUT_FILE_NAME 보다 실제 파일 이름을 앞세운다. 파일을 복사하거나
+ * 이름을 바꿔가며 케이스를 모으는 경우 INPUT_FILE_NAME 은 전부 같을 수 있어
+ * 탭이 구분되지 않기 때문이다.
+ */
 function shortLabel(inputName: string, fileName: string) {
-  const base = (inputName || fileName).replace(/_res\.m$/i, "").replace(/\.m$/i, "");
+  const fromFile = fileName.replace(/_res\.m$/i, "").replace(/\.m$/i, "");
+  const base = fromFile || inputName;
   // 캠페인 파일명은 접두사가 길게 겹치므로 뒤쪽 식별 구간이 더 유용하다.
   const parts = base.split("_");
   return parts.length > 5 ? parts.slice(-6).join("_") : base;

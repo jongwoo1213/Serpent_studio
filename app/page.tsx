@@ -689,7 +689,7 @@ export default function Home() {
   const [linkNotice, setLinkNotice] = useState("");
   const [dropping, setDropping] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
-  const folderInput = useRef<HTMLInputElement>(null);
+  const resultInput = useRef<HTMLInputElement>(null);
   /** 우리가 마지막으로 넣어준 입력문. 사용자가 손댄 편집을 덮어쓰지 않기 위해 비교용으로 쓴다. */
   const loadedSource = useRef(SAMPLE_INPUT);
 
@@ -796,10 +796,14 @@ export default function Home() {
    * 결과문과 입력문을 내용으로 구분한 뒤 이름이 같은 것끼리 이어 준다.
    * 결과문만 들어오면 결과 탭을, 입력문만 들어오면 편집 화면을 연다.
    */
-  async function ingestFiles(files: IngestedFile[]) {
+  async function ingestFiles(files: IngestedFile[], intent: "input" | "result" | "any" = "any") {
     const batch = ingest(files);
     if (!batch.results.length && !batch.inputs.length) {
-      setLinkNotice("Serpent 입력문이나 결과문(_res.m)을 찾지 못했습니다.");
+      setLinkNotice(
+        intent === "result"
+          ? "Serpent 결과문(_res.m)을 찾지 못했습니다."
+          : "Serpent 입력문을 찾지 못했습니다.",
+      );
       return;
     }
 
@@ -840,29 +844,39 @@ export default function Home() {
     const toOpen = paired ?? batch.inputs[0];
     if (toOpen && (sourceIsUntouched() || !batch.results.length)) loadInput(toOpen);
 
-    setView(batch.results.length ? "results" : "builder");
+    setView(
+      intent === "input" ? "builder" : intent === "result" ? "results" : batch.results.length ? "results" : "builder",
+    );
     setLinkNotice(
       batch.results.length && batch.inputs.length
         ? `결과문 ${batch.results.length}개 · 입력문 ${batch.inputs.length}개를 불러와 ${linked}개를 이름으로 연결했습니다.`
         : batch.results.length
-          ? `결과문 ${batch.results.length}개를 불러왔습니다. 짝이 되는 입력문이 함께 선택되지 않아 연결하지 못했습니다.`
+          ? linked
+            ? `결과문 ${batch.results.length}개를 불러와 이미 열린 입력문에 연결했습니다.`
+            : `결과문 ${batch.results.length}개를 탭으로 열었습니다.`
           : linked
             ? `입력문을 불러오고 이름이 같은 결과문에 연결했습니다.`
-            : `입력문 ${batch.inputs.length}개를 불러왔습니다.`,
+            : `입력문을 불러왔습니다.`,
     );
   }
 
-  async function onPickFiles(event: ChangeEvent<HTMLInputElement>) {
+  async function onPickInput(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
     event.target.value = "";
-    if (files.length) await ingestFiles(await readFiles(files));
+    if (files.length) await ingestFiles(await readFiles(files), "input");
+  }
+
+  async function onPickResults(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    if (files.length) await ingestFiles(await readFiles(files), "result");
   }
 
   async function onDrop(event: ReactDragEvent<HTMLElement>) {
     event.preventDefault();
     setDropping(false);
     const files = await readDropped(event.dataTransfer.items);
-    if (files.length) await ingestFiles(files);
+    if (files.length) await ingestFiles(files, "any");
   }
 
   /** 결과 케이스에 짝지어진 입력문을 찾는다. */
@@ -961,39 +975,36 @@ export default function Home() {
               onClick={() => changeFontScale(fontScale + FONT_SCALE_STEP)}
             >A+</button>
           </div>
+          {/* 종류는 내용을 보고 가리므로 accept 로 거르지 않는다.
+              필터를 걸면 확장자 없는 Serpent 입력문이 회색 처리돼 고를 수 없다. */}
           <input
             ref={fileInput}
             type="file"
-            aria-label="Serpent 입력문·결과문 선택"
-            // 종류는 내용을 보고 가리므로 accept 로 거르지 않는다.
-            // 필터를 걸면 확장자 없는 Serpent 입력문이 회색 처리돼 함께 고를 수 없다.
-            multiple
+            aria-label="SERPENT 입력문 선택"
             hidden
-            onChange={onPickFiles}
+            onChange={onPickInput}
           />
           <input
-            ref={folderInput}
+            ref={resultInput}
             type="file"
-            aria-label="계산 폴더 선택"
-            hidden
+            aria-label="Serpent 결과 파일 선택"
             multiple
-            // 폴더째 받아야 같은 이름의 입력문과 결과문을 짝지을 수 있다.
-            {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
-            onChange={onPickFiles}
+            hidden
+            onChange={onPickResults}
           />
           <button
             className="button ghost"
-            title="입력문과 결과문(_res.m)을 함께 고르면 자동으로 연결합니다. ⌘A 로 폴더 안 전체를 고를 수 있습니다."
+            title="Serpent 입력문을 엽니다. 같은 이름의 결과문이 이미 열려 있으면 연결합니다."
             onClick={() => fileInput.current?.click()}
           >
             <Icon>↥</Icon> 열기
           </button>
           <button
             className="button ghost"
-            title="폴더 자체를 고르는 창입니다. 안의 파일이 회색으로 보이는 것은 정상이며, 폴더를 연 상태로 업로드를 누르면 됩니다."
-            onClick={() => folderInput.current?.click()}
+            title="결과문(_res.m)을 엽니다. 여러 개를 골라 탭으로 비교할 수 있습니다."
+            onClick={() => resultInput.current?.click()}
           >
-            <Icon>▤</Icon> 폴더째
+            <Icon>◫</Icon> 결과 열기
           </button>
           <button className="button ghost" onClick={downloadInput}>
             <Icon>↓</Icon> 내보내기
@@ -1118,8 +1129,7 @@ export default function Home() {
               activeId={activeResultId}
               onPickActive={pickActiveResult}
               onPickReference={setReferenceId}
-              onOpen={() => fileInput.current?.click()}
-              onOpenFolder={() => folderInput.current?.click()}
+              onOpen={() => resultInput.current?.click()}
               onRemove={removeResult}
               linkedInput={inputFor}
               onOpenLinkedInput={(file) => { loadInput(file); setView("builder"); }}
@@ -2286,7 +2296,6 @@ function ResultsPanel({
   onPickActive,
   onPickReference,
   onOpen,
-  onOpenFolder,
   onRemove,
   linkedInput,
   onOpenLinkedInput,
@@ -2297,7 +2306,6 @@ function ResultsPanel({
   onPickActive: (id: string) => void;
   onPickReference: (id: string) => void;
   onOpen: () => void;
-  onOpenFolder: () => void;
   onRemove: (id: string) => void;
   linkedInput: (item: ResultCase) => IngestedFile | undefined;
   onOpenLinkedInput: (file: IngestedFile) => void;
@@ -2316,29 +2324,20 @@ function ResultsPanel({
             계산이 끝나면 생기는 <code>*_res.m</code> 파일을 열면 keff·반응도·지발중성자분율 같은
             주요 결과가 자동으로 정리됩니다.
           </p>
-          <ol className="results-empty-hint">
+          <ul className="results-empty-hint">
             <li>
-              <strong>끌어다 놓기</strong> — Finder 에서 폴더나 파일을 이 창에 그대로 놓으면 됩니다.
-              가장 간단하고, 폴더를 놓으면 안의 짝을 모두 찾아냅니다.
+              <strong>여러 개를 한 번에</strong> 골라도 됩니다. 각각 탭으로 열리고,
+              기준 케이스 대비 반응도가(Δρ)를 표로 비교합니다.
             </li>
             <li>
-              <strong>열기</strong> — 파일 선택 창에서 <code>⌘A</code> 로 폴더 안 전체를 고르거나,
-              입력문과 <code>_res.m</code> 을 <code>⌘</code>+클릭으로 함께 고릅니다.
+              <strong>입력문</strong>은 상단 <code>열기</code> 로 따로 불러옵니다.
+              이름이 같으면 (<code>X</code> ↔ <code>X_res.m</code>) 자동으로 연결됩니다.
             </li>
-            <li>
-              <strong>폴더째</strong> — 폴더 자체를 고르는 창입니다.
-              <em>안의 파일이 회색으로 보이는 것은 정상입니다. 폴더를 연 상태에서 그대로 &lsquo;업로드&rsquo;를 누르세요.</em>
-            </li>
-          </ol>
-          <p className="results-empty-note">
-            결과문을 여러 개 넣으면 기준 케이스 대비 반응도가(Δρ)를 표로 비교합니다.
-          </p>
+            <li>Finder 에서 파일이나 폴더를 이 창에 <strong>끌어다 놓아도</strong> 됩니다.</li>
+          </ul>
           <div className="results-empty-actions">
             <button className="button primary" onClick={onOpen}>
-              <Icon>↥</Icon> 파일 고르기
-            </button>
-            <button className="button ghost" onClick={onOpenFolder}>
-              <Icon>▤</Icon> 폴더째 고르기
+              <Icon>◫</Icon> 결과 파일 열기
             </button>
           </div>
         </div>
