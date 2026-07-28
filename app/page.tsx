@@ -31,6 +31,12 @@ import {
   validateSerpentInput,
   VOID_COLOR,
 } from "../lib/serpent";
+import {
+  buildResultCase,
+  buildWorthTable,
+  formatNumber,
+  ResultCase,
+} from "../lib/results";
 
 const GROUPS = [
   { name: "모델 개요", icon: "▤", hint: "계산 사례를 식별하는 제목 카드" },
@@ -661,13 +667,16 @@ export default function Home() {
   const [source, setSource] = useState(SAMPLE_INPUT);
   const [fileName, setFileName] = useState("pwr_pin.inp");
   const [selectedId, setSelectedId] = useState<string>("");
-  const [view, setView] = useState<"builder" | "source" | "preview">("builder");
+  const [view, setView] = useState<"builder" | "source" | "preview" | "results">("builder");
+  const [results, setResults] = useState<ResultCase[]>([]);
+  const [referenceId, setReferenceId] = useState("");
   const [fontScale, setFontScale] = useState(100);
   const [showAdd, setShowAdd] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [collapsedGroups, setCollapsedGroups] = useState<string[]>([]);
   const fileInput = useRef<HTMLInputElement>(null);
+  const resultInput = useRef<HTMLInputElement>(null);
 
   const cards = useMemo(() => parseSerpentInput(source), [source]);
   const model = useMemo(() => parseGeometryModel(cards), [cards]);
@@ -767,6 +776,37 @@ export default function Home() {
     event.target.value = "";
   }
 
+  // 결과 파일은 여러 개를 한꺼번에 받는다. 제어드럼처럼 배치를 바꿔가며 돌린
+  // 캠페인에서는 개별 keff 보다 기준 케이스 대비 Δρ 가 실제 산출물이기 때문이다.
+  async function openResults(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    if (!files.length) return;
+
+    const loaded = await Promise.all(
+      files.map(async (file, index) =>
+        buildResultCase(file.name, await file.text(), `${Date.now()}-${index}-${file.name}`),
+      ),
+    );
+
+    setResults((current) => {
+      // 같은 파일을 다시 열면 갈아끼운다.
+      const kept = current.filter((item) => !loaded.some((next) => next.fileName === item.fileName));
+      const merged = [...kept, ...loaded];
+      setReferenceId((id) => (merged.some((item) => item.id === id) ? id : merged[0]?.id ?? ""));
+      return merged;
+    });
+    setView("results");
+  }
+
+  function removeResult(id: string) {
+    setResults((current) => {
+      const next = current.filter((item) => item.id !== id);
+      setReferenceId((currentId) => (next.some((item) => item.id === currentId) ? currentId : next[0]?.id ?? ""));
+      return next;
+    });
+  }
+
   function downloadInput() {
     const blob = new Blob([source], { type: "text/plain;charset=utf-8" });
     const anchor = document.createElement("a");
@@ -832,8 +872,20 @@ export default function Home() {
             hidden
             onChange={openFile}
           />
+          <input
+            ref={resultInput}
+            type="file"
+            aria-label="Serpent 결과 파일 선택"
+            accept=".m,text/plain"
+            multiple
+            hidden
+            onChange={openResults}
+          />
           <button className="button ghost" onClick={() => fileInput.current?.click()}>
             <Icon>↥</Icon> 열기
+          </button>
+          <button className="button ghost" onClick={() => resultInput.current?.click()}>
+            <Icon>◫</Icon> 결과 열기
           </button>
           <button className="button ghost" onClick={downloadInput}>
             <Icon>↓</Icon> 내보내기
@@ -935,12 +987,24 @@ export default function Home() {
             <button className={view === "preview" ? "active" : ""} onClick={() => setView("preview")}>
               형상 미리보기
             </button>
+            <button className={view === "results" ? "active" : ""} onClick={() => setView("results")}>
+              결과 분석
+              {results.length > 0 && <span className="tab-count">{results.length}</span>}
+            </button>
             <div className="undo-group">
               <button className="icon-button" title="샘플로 되돌리기" onClick={() => setSource(SAMPLE_INPUT)}>↶</button>
             </div>
           </div>
 
-          {view === "preview" ? (
+          {view === "results" ? (
+            <ResultsPanel
+              cases={results}
+              referenceId={referenceId}
+              onPickReference={setReferenceId}
+              onOpen={() => resultInput.current?.click()}
+              onRemove={removeResult}
+            />
+          ) : view === "preview" ? (
             <GeometryPreview
               model={model}
               selectedSurfaceId={selected?.kind === "surface" ? selectedData.name : ""}
@@ -1880,6 +1944,308 @@ function GeometryPreview({
           격자(lat)와 좌표 변환(trans)은 아직 반영되지 않습니다.
         </p>
       </div>
+    </div>
+  );
+}
+
+const SPECTRUM_WIDTH = 640;
+const SPECTRUM_HEIGHT = 220;
+const SPECTRUM_PAD = { left: 54, right: 12, top: 12, bottom: 34 };
+
+/** 군 단위 중성자속을 로그-로그 계단 경로와 눈금으로 환산한다. */
+function buildSpectrumPath(bins: ResultCase["spectrum"]) {
+  const width = SPECTRUM_WIDTH;
+  const height = SPECTRUM_HEIGHT;
+  const pad = SPECTRUM_PAD;
+
+  {
+    const usable = bins.filter((bin) => bin.perLethargy > 0);
+    if (usable.length < 2) return null;
+
+    const eMin = Math.log10(usable[0].low);
+    const eMax = Math.log10(usable[usable.length - 1].high);
+    const fluxMax = Math.log10(Math.max(...usable.map((bin) => bin.perLethargy)));
+    // 아래로 4 decade 만 보여주면 열·고속 봉우리 구조가 가장 잘 드러난다.
+    const fluxMin = fluxMax - 4;
+
+    const x = (energy: number) =>
+      pad.left + ((Math.log10(energy) - eMin) / (eMax - eMin)) * (width - pad.left - pad.right);
+    const y = (flux: number) => {
+      const clamped = Math.max(fluxMin, Math.log10(flux));
+      return height - pad.bottom - ((clamped - fluxMin) / (fluxMax - fluxMin)) * (height - pad.top - pad.bottom);
+    };
+
+    // 군 단위 값이므로 곡선이 아니라 계단으로 그려야 물리적으로 정확하다.
+    const steps: string[] = [];
+    usable.forEach((bin, index) => {
+      const top = y(bin.perLethargy);
+      steps.push(`${index === 0 ? "M" : "L"}${x(bin.low).toFixed(1)} ${top.toFixed(1)}`);
+      steps.push(`L${x(bin.high).toFixed(1)} ${top.toFixed(1)}`);
+    });
+
+    const ticks: { at: number; label: string }[] = [];
+    for (let decade = Math.ceil(eMin); decade <= Math.floor(eMax); decade += 1) {
+      if (decade % 2 !== 0) continue;
+      ticks.push({ at: x(10 ** decade), label: `1e${decade}` });
+    }
+
+    return { d: steps.join(" "), ticks, baseline: y(10 ** fluxMin) };
+  }
+}
+
+function SpectrumChart({ bins }: { bins: ResultCase["spectrum"] }) {
+  const width = SPECTRUM_WIDTH;
+  const height = SPECTRUM_HEIGHT;
+  const pad = SPECTRUM_PAD;
+  const path = useMemo(() => buildSpectrumPath(bins), [bins]);
+
+  if (!path) return null;
+
+  return (
+    <svg className="spectrum-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="중성자속 스펙트럼">
+      <line x1={pad.left} y1={height - pad.bottom} x2={width - pad.right} y2={height - pad.bottom} className="axis" />
+      <line x1={pad.left} y1={pad.top} x2={pad.left} y2={height - pad.bottom} className="axis" />
+      {path.ticks.map((tick) => (
+        <g key={tick.label}>
+          <line x1={tick.at} y1={height - pad.bottom} x2={tick.at} y2={height - pad.bottom + 4} className="axis" />
+          <text x={tick.at} y={height - pad.bottom + 16} className="tick">{tick.label}</text>
+        </g>
+      ))}
+      <text x={width / 2} y={height - 4} className="tick strong">에너지 (MeV)</text>
+      <text x={12} y={height / 2} className="tick strong" transform={`rotate(-90 12 ${height / 2})`}>
+        렙서지당 중성자속
+      </text>
+      <path d={path.d} className="spectrum-line" />
+    </svg>
+  );
+}
+
+function ResultsPanel({
+  cases,
+  referenceId,
+  onPickReference,
+  onOpen,
+  onRemove,
+}: {
+  cases: ResultCase[];
+  referenceId: string;
+  onPickReference: (id: string) => void;
+  onOpen: () => void;
+  onRemove: (id: string) => void;
+}) {
+  const [activeId, setActiveId] = useState("");
+
+  const valid = useMemo(() => cases.filter((item) => !item.error), [cases]);
+  const active = valid.find((item) => item.id === activeId) ?? valid[0];
+  const worth = buildWorthTable(valid, referenceId);
+
+  if (!cases.length) {
+    return (
+      <div className="results-pane empty">
+        <div className="results-empty">
+          <span className="results-empty-mark">◫</span>
+          <h2>Serpent 결과 파일을 불러오세요</h2>
+          <p>
+            계산이 끝나면 생기는 <code>*_res.m</code> 파일을 열면 keff·반응도·지발중성자분율 같은
+            주요 결과가 자동으로 정리됩니다.
+          </p>
+          <p className="results-empty-hint">
+            여러 개를 한꺼번에 선택하면 기준 케이스 대비 반응도가(Δρ)를 표로 비교합니다.
+            제어봉·제어드럼 배치를 바꿔가며 돌린 계산을 비교할 때 쓰세요.
+          </p>
+          <button className="button primary" onClick={onOpen}>
+            <Icon>↥</Icon> 결과 파일 열기
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="results-pane">
+      <div className="results-bar">
+        <div className="results-tabs" role="tablist" aria-label="불러온 결과 파일">
+          {cases.map((item) => (
+            <button
+              key={item.id}
+              role="tab"
+              aria-selected={active?.id === item.id}
+              className={`result-tab ${active?.id === item.id ? "active" : ""} ${item.error ? "broken" : item.worstStatus}`}
+              onClick={() => setActiveId(item.id)}
+              title={item.fileName}
+            >
+              <span className={`status-dot ${item.error ? "bad" : item.worstStatus}`} />
+              <span className="result-tab-name">{item.label}</span>
+              <span
+                className="result-tab-close"
+                role="button"
+                tabIndex={0}
+                aria-label={`${item.label} 닫기`}
+                onClick={(event) => { event.stopPropagation(); onRemove(item.id); }}
+                onKeyDown={(event) => { if (event.key === "Enter") { event.stopPropagation(); onRemove(item.id); } }}
+              >×</span>
+            </button>
+          ))}
+        </div>
+        <button className="button ghost" onClick={onOpen}><Icon>＋</Icon> 추가</button>
+      </div>
+
+      {active?.error || !active ? (
+        <p className="results-error">{cases.find((item) => item.error)?.error ?? "결과를 읽을 수 없습니다."}</p>
+      ) : (
+        <div className="results-body">
+          <header className="results-head">
+            <div>
+              <span className="eyebrow">{active.version || "Serpent"} · {active.completeDate || "완료 시각 미상"}</span>
+              <h1>{active.inputName || active.fileName}</h1>
+              <p>
+                {active.pop?.toLocaleString()}개 입자 × {active.activeCycles ?? "?"}회 활성 사이클
+                {active.cycles !== undefined && ` (전체 ${active.cycles}회 중 ${active.skip}회 버림)`}
+                {active.runningTime !== undefined && ` · ${(active.runningTime / 60).toFixed(1)}분 소요`}
+              </p>
+            </div>
+            <span className={`health-badge ${active.worstStatus}`}>
+              {active.worstStatus === "ok" ? "검증 통과" : active.worstStatus === "warn" ? "확인 필요" : "결과 사용 주의"}
+            </span>
+          </header>
+
+          <section className="metric-row" aria-label="핵심 결과">
+            <div className="metric primary">
+              <span>실효증배계수 k<sub>eff</sub></span>
+              <strong>{active.keff ? formatNumber(active.keff.value, 5) : "—"}</strong>
+              <small>
+                ± {active.keff ? (active.keff.abs * 1e5).toFixed(1) : "—"} pcm · {active.keffEstimator}
+              </small>
+            </div>
+            <div className="metric">
+              <span>반응도 ρ</span>
+              <strong>{active.rho ? active.rho.value.toFixed(1) : "—"}<em>pcm</em></strong>
+              <small>± {active.rho ? active.rho.abs.toFixed(1) : "—"} pcm</small>
+            </div>
+            <div className="metric">
+              <span>반응도 (달러)</span>
+              <strong>{active.dollars !== undefined ? active.dollars.toFixed(3) : "—"}<em>$</em></strong>
+              <small>ρ / β<sub>eff</sub></small>
+            </div>
+            <div className="metric">
+              <span>지발중성자분율 β<sub>eff</sub></span>
+              <strong>{active.betaEff !== undefined ? (active.betaEff * 1e5).toFixed(0) : "—"}<em>pcm</em></strong>
+              <small>{active.betaEff !== undefined ? formatNumber(active.betaEff, 6) : "—"}</small>
+            </div>
+            <div className="metric">
+              <span>중성자 세대시간 Λ</span>
+              <strong>{active.genTime !== undefined ? (active.genTime * 1e6).toFixed(2) : "—"}<em>μs</em></strong>
+              <small>{active.genTimeEstimator || "—"}</small>
+            </div>
+          </section>
+
+          <section className="results-section">
+            <h2>계산 건전성</h2>
+            <p className="section-note">
+              값을 쓰기 전에 확인하는 항목입니다. 하나라도 실패하면 keff 자체를 신뢰할 수 없습니다.
+            </p>
+            <div className="check-grid">
+              {active.checks.map((check) => (
+                <div className={`check-item ${check.status}`} key={check.label}>
+                  <span className={`status-dot ${check.status}`} />
+                  <div>
+                    <strong>{check.label}</strong>
+                    <small>{check.detail}</small>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          {valid.length > 1 && (
+            <section className="results-section">
+              <h2>기준 대비 반응도가 (Δρ)</h2>
+              <p className="section-note">
+                제어드럼·제어봉 배치 연구의 최종 산출물입니다. 두 계산이 독립이므로 오차는 √(σ₁²+σ₂²)로 전파됩니다.
+                기준보다 반응도가 낮으면 음수(삽입 효과)입니다.
+              </p>
+              <label className="reference-picker">
+                <span>기준 케이스</span>
+                <select value={referenceId} onChange={(event) => onPickReference(event.target.value)}>
+                  {valid.map((item) => (
+                    <option key={item.id} value={item.id}>{item.label}</option>
+                  ))}
+                </select>
+              </label>
+              <div className="table-scroll">
+                <table className="worth-table">
+                  <thead>
+                    <tr>
+                      <th>케이스</th>
+                      <th>k<sub>eff</sub></th>
+                      <th>ρ (pcm)</th>
+                      <th>Δρ (pcm)</th>
+                      <th>Δρ ($)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {worth.map((row) => (
+                      <tr key={row.case.id} className={row.isReference ? "is-reference" : ""}>
+                        <td>
+                          <span className={`status-dot ${row.case.worstStatus}`} />
+                          {row.case.label}
+                          {row.isReference && <span className="ref-tag">기준</span>}
+                        </td>
+                        <td className="num">
+                          {row.case.keff ? formatNumber(row.case.keff.value, 5) : "—"}
+                          <small>±{row.case.keff ? (row.case.keff.abs * 1e5).toFixed(1) : "—"}</small>
+                        </td>
+                        <td className="num">{row.case.rho ? row.case.rho.value.toFixed(1) : "—"}</td>
+                        <td className="num strong">
+                          {row.isReference || row.deltaRho === undefined ? "—" : (
+                            <>
+                              {row.deltaRho > 0 ? "+" : ""}{row.deltaRho.toFixed(1)}
+                              <small>±{row.sigma?.toFixed(1)}</small>
+                            </>
+                          )}
+                        </td>
+                        <td className="num">
+                          {row.isReference || row.dollars === undefined
+                            ? "—"
+                            : `${row.dollars > 0 ? "+" : ""}${row.dollars.toFixed(3)}`}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
+          <section className="results-section">
+            <h2>노심 물리 특성</h2>
+            <div className="physics-grid">
+              {active.physics.map((row) => (
+                <div className="physics-item" key={row.label}>
+                  <span>{row.label}</span>
+                  <strong>{row.value}</strong>
+                  <small>{row.hint}</small>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          {active.spectrum.length > 0 && (
+            <section className="results-section">
+              <h2>중성자속 스펙트럼</h2>
+              <p className="section-note">
+                무한체계 70군 중성자속(INF_MICRO_FLX)을 단위 렙서지당 값으로 환산한 결과입니다.
+              </p>
+              <SpectrumChart bins={active.spectrum} />
+            </section>
+          )}
+
+          <p className="preview-note">
+            res.m 에서 값 뒤의 두 번째 숫자는 절대오차가 아니라 <strong>상대 표준편차</strong>입니다.
+            이 화면의 ± 표기는 이미 값과 곱해 절대오차로 환산한 것입니다.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
