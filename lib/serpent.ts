@@ -346,7 +346,9 @@ export function validateSerpentInput(cards: SerpentCard[]): ValidationIssue[] {
       }
       materials.add(data.name);
 
-      if (data.density && !isNumericToken(data.density)) {
+      // "sum" 은 실제 숫자가 아니라 "아래 핵종 밀도의 합을 물질 밀도로 쓴다"는
+      // Serpent 의 정식 키워드다. 실제 VTT 예제 입력에서도 흔히 쓰인다.
+      if (data.density && data.density.toLowerCase() !== "sum" && !isNumericToken(data.density)) {
         issues.push({
           level: "error",
           message: `물질 '${data.name}'의 밀도가 숫자가 아닙니다: '${data.density}'`,
