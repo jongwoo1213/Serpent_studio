@@ -373,8 +373,8 @@ export function buildResultCase(fileName: string, text_: string, id: string, dir
 
   const inputName = text(entries, "INPUT_FILE_NAME");
 
-  // keff 는 통계 품질이 가장 좋은 implicit 추정기를 우선 사용한다.
-  const keffPick = pick(["IMP_KEFF", "ABS_KEFF", "COL_KEFF", "ANA_KEFF"], (name) => stat(entries, name));
+  // keff 는 analog 추정기(ANA_KEFF)를 우선 사용하고, 없으면 다른 추정기로 대체한다.
+  const keffPick = pick(["ANA_KEFF", "IMP_KEFF", "ABS_KEFF", "COL_KEFF"], (name) => stat(entries, name));
   const keff = keffPick.value;
 
   // β_eff 는 Meulekamp 값을 기본으로, 없으면 ANA_KEFF 의 즉발 성분에서 되짚는다.
