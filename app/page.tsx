@@ -47,6 +47,14 @@ import {
   readDropped,
   readFiles,
 } from "../lib/pairing";
+import {
+  Detector,
+  detectorBaseName,
+  detectorToSpectrumBins,
+  isDetectorFileName,
+  looksLikeDetectorFile,
+  parseDetectorFile,
+} from "../lib/detectors";
 
 const GROUPS = [
   { name: "모델 개요", icon: "▤", hint: "계산 사례를 식별하는 제목 카드" },
@@ -702,6 +710,8 @@ export default function Home() {
   const [collapsedGroups, setCollapsedGroups] = useState<string[]>([]);
   // 결과문에서 짝을 찾아 열 수 있도록, 함께 들어온 입력문을 pairKey 로 들고 있는다.
   const [inputLibrary, setInputLibrary] = useState<Map<string, IngestedFile>>(new Map());
+  // dir+기본이름 → 그 이름의 결과문과 짝지어질 검출기(det) 스펙트럼들.
+  const [detectorLibrary, setDetectorLibrary] = useState<Map<string, Detector[]>>(new Map());
   const [linkNotice, setLinkNotice] = useState("");
   const [dropping, setDropping] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -871,9 +881,48 @@ export default function Home() {
    *
    * 결과문과 입력문을 내용으로 구분한 뒤 이름이 같은 것끼리 이어 준다.
    * 결과문만 들어오면 결과 탭을, 입력문만 들어오면 편집 화면을 연다.
+   *
+   * 검출기(det) 출력은 _res.m 과 완전히 다른 파일(`[input]_det[idx].m`)이자
+   * 다른 문법(`DETNAME = [ ... ];` 행렬)이라 여기서 먼저 걸러내 별도로 다룬다.
+   * 나머지 입력문/결과문 분류(ingest)는 그다음에 손댄다.
    */
   async function ingestFiles(files: IngestedFile[], intent: "input" | "result" | "any" = "any") {
-    const batch = ingest(files);
+    const detectorFiles = files.filter((file) => isDetectorFileName(file.name) || looksLikeDetectorFile(file.text));
+    const rest = files.filter((file) => !detectorFiles.includes(file));
+    const detectorKeys = detectorFiles.map((file) => ({
+      file,
+      key: `${file.dir}␟${detectorBaseName(file.name)}`,
+    }));
+    const resultKey = (item: { dir: string; fileName: string }) =>
+      `${item.dir}␟${item.fileName.replace(/_res\.m$/i, "").replace(/\.m$/i, "")}`;
+
+    if (detectorFiles.length) {
+      const nextLibrary = new Map(detectorLibrary);
+      for (const { file, key } of detectorKeys) nextLibrary.set(key, parseDetectorFile(file.text));
+      setDetectorLibrary(nextLibrary);
+    }
+
+    if (!rest.length) {
+      if (detectorFiles.length) {
+        // 결과문 없이 검출기 출력만 들어온 경우, 지금 열려 있는 결과 탭 중에 짝이 있는지만 본다
+        // (같은 배치로 함께 고른 결과문과의 연결은 rest.length 가 0 이 아닌 아래 분기에서 처리된다).
+        const linked = detectorKeys.filter(({ key }) => results.some((item) => resultKey(item) === key)).length;
+        setLinkNotice(
+          linked
+            ? `검출기 출력 ${detectorFiles.length}개를 불러와 열려 있는 결과에 연결했습니다.`
+            : `검출기 출력 ${detectorFiles.length}개를 불러왔습니다. 같은 이름의 결과문을 열면 스펙트럼에서 고를 수 있습니다.`,
+        );
+      } else {
+        setLinkNotice(
+          intent === "result"
+            ? "Serpent 결과문(_res.m)을 찾지 못했습니다."
+            : "Serpent 입력문을 찾지 못했습니다.",
+        );
+      }
+      return;
+    }
+
+    const batch = ingest(rest);
     if (!batch.results.length && !batch.inputs.length) {
       setLinkNotice(
         intent === "result"
@@ -933,8 +982,9 @@ export default function Home() {
     setView(
       intent === "input" ? "builder" : intent === "result" ? "results" : batch.results.length ? "results" : "builder",
     );
+    const detectorSuffix = detectorFiles.length ? ` 검출기 출력 ${detectorFiles.length}개도 함께 연결했습니다.` : "";
     setLinkNotice(
-      batch.results.length && batch.inputs.length
+      (batch.results.length && batch.inputs.length
         ? `결과문 ${batch.results.length}개 · 입력문 ${batch.inputs.length}개를 불러와 ${linked}개를 이름으로 연결했습니다.`
         : batch.results.length
           ? linked
@@ -942,7 +992,7 @@ export default function Home() {
             : `결과문 ${batch.results.length}개를 탭으로 열었습니다.`
           : linked
             ? `입력문을 불러오고 이름이 같은 결과문에 연결했습니다.`
-            : `입력문을 불러왔습니다.`,
+            : `입력문을 불러왔습니다.`) + detectorSuffix,
     );
   }
 
@@ -968,6 +1018,12 @@ export default function Home() {
   /** 결과 케이스에 짝지어진 입력문을 찾는다. */
   function inputFor(item: ResultCase) {
     return inputLibrary.get(pairKey({ name: item.fileName, dir: item.dir, text: "" }, "result"));
+  }
+
+  /** 결과 케이스에 짝지어진 검출기(det) 스펙트럼들을 찾는다. */
+  function detectorsFor(item: ResultCase) {
+    const key = `${item.dir}␟${item.fileName.replace(/_res\.m$/i, "").replace(/\.m$/i, "")}`;
+    return detectorLibrary.get(key) ?? [];
   }
 
   /**
@@ -1247,6 +1303,7 @@ export default function Home() {
               onRemove={removeResult}
               linkedInput={inputFor}
               onOpenLinkedInput={(file) => { loadInput(file); setView("builder"); }}
+              detectorsFor={detectorsFor}
             />
           ) : view === "source" ? (
             <div className="source-editor">
@@ -2492,6 +2549,7 @@ function ResultsPanel({
   onRemove,
   linkedInput,
   onOpenLinkedInput,
+  detectorsFor,
 }: {
   cases: ResultCase[];
   referenceId: string;
@@ -2502,10 +2560,14 @@ function ResultsPanel({
   onRemove: (id: string) => void;
   linkedInput: (item: ResultCase) => IngestedFile | undefined;
   onOpenLinkedInput: (file: IngestedFile) => void;
+  detectorsFor: (item: ResultCase) => Detector[];
 }) {
   const valid = useMemo(() => cases.filter((item) => !item.error), [cases]);
   const active = valid.find((item) => item.id === activeId) ?? valid[0];
   const worth = buildWorthTable(valid, referenceId);
+  const detectors = active ? detectorsFor(active) : [];
+  // "gc" = res.m 의 INF_MICRO_FLX(군상수 생성 부산물), 그 외에는 det 검출기 이름.
+  const [spectrumSource, setSpectrumSource] = useState("gc");
 
   if (!cases.length) {
     return (
@@ -2734,15 +2796,59 @@ function ResultsPanel({
             </div>
           </section>
 
-          {active.spectrum.length > 0 && (
-            <section className="results-section">
-              <h2>중성자속 스펙트럼</h2>
-              <p className="section-note">
-                무한체계 70군 중성자속(INF_MICRO_FLX)을 단위 렙서지당 값으로 환산한 결과입니다.
-              </p>
-              <SpectrumChart bins={active.spectrum} />
-            </section>
-          )}
+          {(() => {
+            // "gc" = res.m 안의 INF_MICRO_FLX(군상수 생성이 켜졌을 때 자동으로 딸려오는
+            // 무한매질 스펙트럼). det 검출기는 사용자가 직접 정의해 별도 파일
+            // (`[input]_det[idx].m`)에 저장되는 값이라 성격이 다르다 — 원하는 영역만
+            // 골라 뽑을 수 있는 대신, 파일을 따로 열어야 보인다.
+            const sources = [
+              ...(active.spectrum.length ? [{ id: "gc", label: "INF_MICRO_FLX (군상수)" }] : []),
+              ...detectors.map((det) => ({ id: det.name, label: `det: ${det.name}` })),
+            ];
+            if (!sources.length) return null;
+            const effective = sources.some((source) => source.id === spectrumSource)
+              ? spectrumSource
+              : sources[0].id;
+            const bins = effective === "gc"
+              ? active.spectrum
+              : detectorToSpectrumBins(detectors.find((det) => det.name === effective)!);
+
+            return (
+              <section className="results-section">
+                <h2>중성자속 스펙트럼</h2>
+                {sources.length > 1 ? (
+                  <label className="reference-picker">
+                    <span>출처</span>
+                    <select value={effective} onChange={(event) => setSpectrumSource(event.target.value)}>
+                      {sources.map((source) => (
+                        <option key={source.id} value={source.id}>{source.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+                <p className="section-note">
+                  {effective === "gc" ? (
+                    <>
+                      {active.entries.get("GC_UNIVERSE_NAME")?.text
+                        ? `균질화 유니버스 '${active.entries.get("GC_UNIVERSE_NAME")?.text}'의 `
+                        : ""}
+                      무한매질 스펙트럼(INF_MICRO_FLX)을 단위 렙서지당 값으로 환산한 결과입니다.
+                      군상수 생성이 켜져 있을 때 자동으로 만들어지는 값이라, 그 유니버스가
+                      전체 모델을 덮지 않으면 모델 전체가 아니라 그 영역만의 스펙트럼입니다.
+                    </>
+                  ) : (
+                    <>
+                      검출기 <code>{effective}</code>의 에너지 구간별 값을 단위 렙서지당으로 환산한
+                      결과입니다. det 파일 파싱은 VTT 공식 문서의 열 배치만 보고 작성했고 실제
+                      Serpent 출력으로 검증하지는 못했습니다 — 정확한 값인지는 원본 det 파일과
+                      대조해 보세요.
+                    </>
+                  )}
+                </p>
+                <SpectrumChart bins={bins} />
+              </section>
+            );
+          })()}
 
           <p className="preview-note">
             res.m 에서 값 뒤의 두 번째 숫자는 절대오차가 아니라 <strong>상대 표준편차</strong>입니다.
