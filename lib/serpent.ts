@@ -501,6 +501,22 @@ export type PinLayer = {
   radius: number;
 };
 
+export type GeometryLattice = {
+  id: string;
+  type: number;
+  x0: number;
+  y0: number;
+  nx: number;
+  ny: number;
+  pitch: number;
+  /** 입력문에 적힌 순서(위쪽 행부터, 각 행은 왼쪽부터)의 채움 유니버스. */
+  universes: string[];
+};
+
+export type GeometryTransform = {
+  translation: [number, number, number];
+};
+
 export type GeometryMaterial = {
   name: string;
   color: [number, number, number];
@@ -511,6 +527,8 @@ export type GeometryModel = {
   cells: GeometryCell[];
   cellsByUniverse: Map<string, GeometryCell[]>;
   pins: Map<string, PinLayer[]>;
+  lattices: Map<string, GeometryLattice>;
+  transforms: Map<string, GeometryTransform>;
   materials: Map<string, GeometryMaterial>;
 };
 
@@ -625,6 +643,8 @@ export function parseGeometryModel(cards: SerpentCard[]): GeometryModel {
   const surfaces = new Map<string, GeometrySurface>();
   const materials = new Map<string, GeometryMaterial>();
   const pins = new Map<string, PinLayer[]>();
+  const lattices = new Map<string, GeometryLattice>();
+  const transforms = new Map<string, GeometryTransform>();
   const cells: GeometryCell[] = [];
 
   for (const card of cards) {
@@ -680,6 +700,52 @@ export function parseGeometryModel(cards: SerpentCard[]): GeometryModel {
       }
       pins.set(parts[1], layers);
     }
+
+    if (card.keyword === "lat" && parts.length >= 8) {
+      const type = Number(parts[2]);
+      const x0 = Number(parts[3]);
+      const y0 = Number(parts[4]);
+      const nx = Number(parts[5]);
+      const ny = Number(parts[6]);
+      const pitch = Number(parts[7]);
+      if (
+        type === 1 &&
+        [x0, y0, nx, ny, pitch].every(Number.isFinite) &&
+        Number.isInteger(nx) &&
+        Number.isInteger(ny) &&
+        nx > 0 &&
+        ny > 0 &&
+        pitch > 0
+      ) {
+        const allParts = card.lines.flatMap((line) => tokens(line));
+        lattices.set(parts[1], {
+          id: parts[1],
+          type,
+          x0,
+          y0,
+          nx,
+          ny,
+          pitch,
+          universes: allParts.slice(8, 8 + nx * ny),
+        });
+      }
+    }
+
+    if (card.keyword === "trans" && parts.length >= 5) {
+      // Serpent 2.1 계열의 `trans UNI X Y Z`와 현재 형식의
+      // `trans u UNI X Y Z` 평행이동을 모두 받는다.
+      const typed = parts[1]?.toLowerCase() === "u";
+      const universe = typed ? parts[2] : parts[1];
+      const offset = typed ? 3 : 2;
+      const values = parts.slice(offset, offset + 3).map(Number);
+      // 뒤에 회전 인수가 붙은 변환은 평행이동만 적용하면 오히려 그럴듯한 오답을
+      // 그리게 된다. 현재 미리보기는 순수 평행이동 카드만 명시적으로 지원한다.
+      if (universe && parts.length === offset + 3 && values.length === 3 && values.every(Number.isFinite)) {
+        transforms.set(universe, {
+          translation: [values[0], values[1], values[2]],
+        });
+      }
+    }
   }
 
   // 표면은 셀보다 뒤에 정의될 수 있으므로, 모든 카드를 읽은 지금 참조를 연결하고
@@ -696,7 +762,7 @@ export function parseGeometryModel(cards: SerpentCard[]): GeometryModel {
     else cellsByUniverse.set(cell.universe, [cell]);
   }
 
-  return { surfaces, cells, cellsByUniverse, pins, materials };
+  return { surfaces, cells, cellsByUniverse, pins, lattices, transforms, materials };
 }
 
 export function materialColor(
@@ -784,7 +850,8 @@ function surfaceSideBounds(surface: GeometrySurface, positive: boolean): Bounds3
     return { ...UNBOUNDED, xMin: at(0) - r, xMax: at(0) + r, yMin: at(1) - r, yMax: at(1) + r };
   }
   if (surface.type === "sqc") {
-    const h = v.at(-1) ?? 0;
+    // sqc x0 y0 d [s]: d가 반폭이고, 마지막 선택 인수 s는 모서리 곡률 반경이다.
+    const h = at(2);
     if (!Number.isFinite(h)) return UNBOUNDED;
     return { ...UNBOUNDED, xMin: at(0) - h, xMax: at(0) + h, yMin: at(1) - h, yMax: at(1) + h };
   }
@@ -857,11 +924,28 @@ function surfaceValue(surface: GeometrySurface, x: number, y: number, z: number)
   const v = surface.values;
   // 픽셀마다 도는 경로이므로 v.at(-1) 같은 메서드 호출 대신 첨자로 읽는다.
   const last = v.length ? v[v.length - 1] ?? 0 : 0;
+  // `surf NAME inf`는 무한 유니버스의 재료 셀을 만들 때 쓰는 더미 표면이다.
+  // 음의 반공간(-NAME)이 전체 공간이 되도록 항상 음수를 반환한다.
+  if (surface.type === "inf") return -1;
   if (surface.type === "cyl" || surface.type === "cylz") {
     return Math.hypot(x - (v[0] ?? 0), y - (v[1] ?? 0)) - last;
   }
   if (surface.type === "sqc") {
-    return Math.max(Math.abs(x - (v[0] ?? 0)), Math.abs(y - (v[1] ?? 0))) - last;
+    const dx = Math.abs(x - (v[0] ?? 0));
+    const dy = Math.abs(y - (v[1] ?? 0));
+    const halfWidth = v[2] ?? 0;
+    const cornerRadius = Math.max(0, Math.min(v[3] ?? 0, halfWidth));
+    if (!cornerRadius) return Math.max(dx, dy) - halfWidth;
+
+    // 축 정렬 rounded box의 signed distance. 음수는 표면 안쪽이다.
+    const innerHalfWidth = halfWidth - cornerRadius;
+    const qx = dx - innerHalfWidth;
+    const qy = dy - innerHalfWidth;
+    return (
+      Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) +
+      Math.min(Math.max(qx, qy), 0) -
+      cornerRadius
+    );
   }
   if (surface.type === "sph") {
     return Math.hypot(
@@ -947,6 +1031,41 @@ function pinMaterialAt(layers: PinLayer[], x: number, y: number) {
   return layers.at(-1)?.material ?? "";
 }
 
+function universeCoordinates(
+  model: GeometryModel,
+  universe: string,
+  x: number,
+  y: number,
+  z: number,
+) {
+  const transform = model.transforms.get(universe);
+  if (!transform) return [x, y, z] as const;
+  return [
+    x - transform.translation[0],
+    y - transform.translation[1],
+    z - transform.translation[2],
+  ] as const;
+}
+
+function latticeElementAt(lattice: GeometryLattice, x: number, y: number) {
+  const xMin = lattice.x0 - lattice.nx * lattice.pitch / 2;
+  const yMin = lattice.y0 - lattice.ny * lattice.pitch / 2;
+  const column = Math.floor((x - xMin) / lattice.pitch);
+  const rowFromBottom = Math.floor((y - yMin) / lattice.pitch);
+  if (column < 0 || column >= lattice.nx || rowFromBottom < 0 || rowFromBottom >= lattice.ny) {
+    return null;
+  }
+
+  // Serpent 입력 표는 위쪽 행부터 적지만 내부 y 인덱스는 아래에서 위로 증가한다.
+  const rowFromTop = lattice.ny - 1 - rowFromBottom;
+  const universe = lattice.universes[rowFromTop * lattice.nx + column];
+  if (!universe) return null;
+
+  const centerX = lattice.x0 + (column - (lattice.nx - 1) / 2) * lattice.pitch;
+  const centerY = lattice.y0 + (rowFromBottom - (lattice.ny - 1) / 2) * lattice.pitch;
+  return { universe, x: x - centerX, y: y - centerY };
+}
+
 function materialInUniverse(
   model: GeometryModel,
   universe: string,
@@ -956,8 +1075,18 @@ function materialInUniverse(
   depth: number,
 ): string {
   if (depth > 8) return "";
+  [x, y, z] = universeCoordinates(model, universe, x, y, z);
+
   const pin = model.pins.get(universe);
   if (pin) return pinMaterialAt(pin, x, y);
+
+  const lattice = model.lattices.get(universe);
+  if (lattice) {
+    const element = latticeElementAt(lattice, x, y);
+    return element
+      ? materialInUniverse(model, element.universe, element.x, element.y, z, depth + 1)
+      : "";
+  }
 
   for (const cell of model.cellsByUniverse.get(universe) ?? []) {
     if (cell.material === "outside") continue;
@@ -1009,8 +1138,18 @@ function classifyInUniverse(
   depth: number,
 ): PointInfo {
   if (depth > 8) return { material: "", status: "unsupported", overlap: NO_OVERLAP };
+  [x, y, z] = universeCoordinates(model, universe, x, y, z);
+
   const pin = model.pins.get(universe);
   if (pin) return { material: pinMaterialAt(pin, x, y), status: "material", overlap: NO_OVERLAP };
+
+  const lattice = model.lattices.get(universe);
+  if (lattice) {
+    const element = latticeElementAt(lattice, x, y);
+    return element
+      ? classifyInUniverse(model, element.universe, element.x, element.y, z, depth + 1)
+      : { material: "", status: "undefined", overlap: NO_OVERLAP };
+  }
 
   // Serpent는 조건을 만족하는 첫 셀을 쓰고 멈추므로 겹쳐도 오류가 나지 않는다.
   // 여기서는 나머지 셀까지 모두 확인해 그 조용한 겹침을 드러낸다. 픽셀마다 호출되는
@@ -1032,7 +1171,10 @@ function classifyInUniverse(
   if (first.material === "outside") return { material: "", status: "outside", overlap };
   if (first.fill) {
     // 격자(lat)처럼 정의를 찾을 수 없는 유니버스는 빈틈으로 오해하지 않도록 보류한다.
-    const known = model.cellsByUniverse.has(first.fill) || model.pins.has(first.fill);
+    const known =
+      model.cellsByUniverse.has(first.fill) ||
+      model.pins.has(first.fill) ||
+      model.lattices.has(first.fill);
     if (!known) return { material: "", status: "unsupported", overlap };
     const inner = classifyInUniverse(model, first.fill, x, y, z, depth + 1);
     return {
@@ -1138,7 +1280,12 @@ export function geometryPlotBounds(model: GeometryModel, basis: PlotBasis): Plot
   for (const surface of model.surfaces.values()) {
     const v = surface.values;
     if (["cyl", "cylz", "pad", "sqc"].includes(surface.type)) {
-      const radius = surface.type === "pad" ? (v[3] ?? 0) : (v.at(-1) ?? 0);
+      const radius =
+        surface.type === "pad"
+          ? (v[3] ?? 0)
+          : surface.type === "sqc"
+            ? (v[2] ?? 0)
+            : (v.at(-1) ?? 0);
       xValues.push((v[0] ?? 0) - radius, (v[0] ?? 0) + radius);
       yValues.push((v[1] ?? 0) - radius, (v[1] ?? 0) + radius);
     }

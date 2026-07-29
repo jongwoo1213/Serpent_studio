@@ -138,3 +138,69 @@ test("classifyPoint / materialAtPoint agree on SAMPLE_INPUT and the model has no
 
   assert.deepEqual(diagnoseGeometry(model), []);
 });
+
+test("square lattice type 1 maps input rows top-to-bottom and evaluates local universes", () => {
+  const src = [
+    "surf inf inf",
+    "surf box sqc 0 0 2",
+    "mat a -1 rgb 10 20 30\n1001.09c 1",
+    "mat b -1 rgb 40 50 60\n1001.09c 1",
+    "mat c -1 rgb 70 80 90\n1001.09c 1",
+    "mat d -1 rgb 100 110 120\n1001.09c 1",
+    "cell ca A a -inf",
+    "cell cb B b -inf",
+    "cell cc C c -inf",
+    "cell cd D d -inf",
+    "lat L 1 0 0 2 2 2",
+    "A B",
+    "C D",
+    "cell root 0 fill L -box",
+    "cell outer 0 outside box",
+  ].join("\n");
+  const model = parseGeometryModel(parseSerpentInput(src));
+
+  assert.equal(materialAtPoint(model, -1, 1, 0), "a");
+  assert.equal(materialAtPoint(model, 1, 1, 0), "b");
+  assert.equal(materialAtPoint(model, -1, -1, 0), "c");
+  assert.equal(materialAtPoint(model, 1, -1, 0), "d");
+  assert.equal(classifyPoint(model, 1, 1, 0).status, "material");
+  assert.deepEqual(diagnoseGeometry(model), []);
+});
+
+test("legacy universe trans applies the inverse translation before evaluating filled cells", () => {
+  const src = [
+    "surf local cyl 0 0 1",
+    "surf outer cyl 5 0 2",
+    "mat fuel -1\n1001.09c 1",
+    "mat air -0.001\n7014.09c 1",
+    "cell inner shifted fuel -local",
+    "cell rest shifted air local",
+    "trans shifted 5 0 0",
+    "cell root 0 fill shifted -outer",
+    "cell outside 0 outside outer",
+  ].join("\n");
+  const model = parseGeometryModel(parseSerpentInput(src));
+
+  assert.equal(materialAtPoint(model, 5, 0, 0), "fuel");
+  assert.equal(materialAtPoint(model, 6.5, 0, 0), "air");
+  assert.equal(classifyPoint(model, 5, 0, 0).status, "material");
+  assert.deepEqual(diagnoseGeometry(model), []);
+});
+
+test("sqc uses its third value as half-width and its optional fourth value as corner radius", () => {
+  const src = [
+    "surf rounded sqc 0 0 2 0.5",
+    "surf outer sqc 0 0 3",
+    "mat fuel -1\n1001.09c 1",
+    "mat air -0.001\n7014.09c 1",
+    "cell fuel-cell 0 fuel -rounded",
+    "cell air-cell 0 air rounded -outer",
+    "cell outside 0 outside outer",
+  ].join("\n");
+  const model = parseGeometryModel(parseSerpentInput(src));
+
+  assert.equal(materialAtPoint(model, 1.8, 1.8, 0), "fuel");
+  assert.equal(materialAtPoint(model, 1.9, 1.9, 0), "air");
+  assert.equal(materialAtPoint(model, 2.5, 0, 0), "air");
+  assert.deepEqual(diagnoseGeometry(model), []);
+});

@@ -2048,7 +2048,7 @@ function GeometryPreview({
       if (basis === "xy" && ["cyl", "cylz", "sqc"].includes(activeSurface.type)) {
         const centerX = v[0] ?? 0;
         const centerY = v[1] ?? 0;
-        const radius = v.at(-1) ?? 0;
+        const radius = activeSurface.type === "sqc" ? (v[2] ?? 0) : (v.at(-1) ?? 0);
         const center = toCanvas(centerX, centerY);
         const edge = toCanvas(centerX + radius, centerY);
         if (activeSurface.type === "sqc") {
@@ -2152,9 +2152,10 @@ function GeometryPreview({
       };
     }
     if (surface.type === "sqc") {
+      const cornerRadius = v[3];
       return {
         position: `(${(v[0] ?? 0).toFixed(2)}, ${(v[1] ?? 0).toFixed(2)})`,
-        dimension: `반폭 ${(v.at(-1) ?? 0).toFixed(3)}`,
+        dimension: `반폭 ${(v[2] ?? 0).toFixed(3)}${Number.isFinite(cornerRadius) ? ` · 모서리 R ${cornerRadius.toFixed(3)}` : ""}`,
       };
     }
     return { position: `${surface.type} = ${(v[0] ?? 0).toFixed(3)}`, dimension: `원점거리 ${Math.abs(v[0] ?? 0).toFixed(3)}` };
@@ -2321,7 +2322,7 @@ function GeometryPreview({
 
         <p className="preview-note">
           이 평면도는 결과 이미지가 아니라 입력문의 표면·셀 Boolean 조건과 물질 색을 픽셀별로 계산해 생성합니다.
-          격자(lat)와 좌표 변환(trans)은 아직 반영되지 않습니다.
+          직교 격자(lat type 1)와 유니버스 평행이동(trans)을 반영하며, 그 밖의 격자 형식과 회전 변환은 아직 지원하지 않습니다.
         </p>
       </div>
     </div>
