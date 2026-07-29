@@ -690,6 +690,8 @@ export default function Home() {
   // 원문) 기준으로만 다시 계산한다.
   const [geometrySource, setGeometrySource] = useState(SAMPLE_INPUT);
   const [showIssues, setShowIssues] = useState(false);
+  // 좁은 화면(≤760px)에서 숨는 형상 미리보기 패널을 전체화면 오버레이로 다시 열지 여부.
+  const [mobileGeometryOpen, setMobileGeometryOpen] = useState(false);
   const [results, setResults] = useState<ResultCase[]>([]);
   const [referenceId, setReferenceId] = useState("");
   const [activeResultId, setActiveResultId] = useState("");
@@ -742,7 +744,8 @@ export default function Home() {
   const selectedMeanings = selected ? interpretCardValues(selected, selectedData) : [];
   const errors = issues.filter((issue) => issue.level === "error").length;
   const issuesTone = errors ? "bad" : issues.length ? "warn" : "ok";
-  const issuesLabel = errors ? `오류 ${errors}개` : issues.length ? `권장 ${issues.length}개` : "정상";
+  // 형상 겹침·빈틈 검사는 격자 표본점만 확인하므로 "정상"이라고 단정하지 않는다.
+  const issuesLabel = errors ? `오류 ${errors}개` : issues.length ? `권장 ${issues.length}개` : "표본 검사 통과";
 
   const groupedCards = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -878,6 +881,16 @@ export default function Home() {
           : "Serpent 입력문을 찾지 못했습니다.",
       );
       return;
+    }
+
+    // 결과문 없이 입력문만 들어오면 아래에서 편집기 내용을 곧바로 갈아끼운다(loadInput).
+    // 지금 편집 중인 내용이 저장되지 않은 상태라면 조용히 덮어쓰지 않고 먼저 확인한다.
+    const willReplaceEditor = !batch.results.length && batch.inputs.length > 0;
+    if (willReplaceEditor && !sourceIsUntouched()) {
+      const proceed = window.confirm(
+        "지금 편집 중인 입력문에 저장하지 않은 변경 사항이 있습니다. 새 입력문을 열면 그 내용이 사라집니다. 계속할까요?",
+      );
+      if (!proceed) return;
     }
 
     // 같은 이름의 입력문을 계속 들고 있어야 결과 탭을 옮길 때도 짝을 찾을 수 있다.
@@ -1197,10 +1210,28 @@ export default function Home() {
               {results.length > 0 && <span className="tab-count">{results.length}</span>}
             </button>
             <div className="undo-group">
+              {/* 화면이 760px 이하로 좁아지면 형상 미리보기 패널 전체가 숨는다(공간이 없어서).
+                  이 버튼은 그 폭에서만 CSS로 나타나 전체화면 오버레이로 다시 열어 준다. */}
+              <button
+                className="icon-button mobile-geometry-toggle"
+                title="형상 미리보기 열기"
+                aria-label="형상 미리보기 열기"
+                onClick={() => setMobileGeometryOpen(true)}
+              >◫</button>
               <button
                 className="icon-button"
                 title="샘플로 되돌리기"
-                onClick={() => { setSource(SAMPLE_INPUT); setGeometrySource(SAMPLE_INPUT); }}
+                onClick={() => {
+                  if (
+                    !sourceIsUntouched() &&
+                    !window.confirm("지금 편집 중인 내용을 버리고 샘플 입력으로 되돌릴까요?")
+                  ) {
+                    return;
+                  }
+                  loadedSource.current = SAMPLE_INPUT;
+                  setSource(SAMPLE_INPUT);
+                  setGeometrySource(SAMPLE_INPUT);
+                }}
               >↶</button>
             </div>
           </div>
@@ -1357,10 +1388,22 @@ export default function Home() {
           }}
         />
 
-        <aside className="geometry-pane" aria-label="형상 미리보기">
+        <aside
+          className={mobileGeometryOpen ? "geometry-pane mobile-open" : "geometry-pane"}
+          aria-label="형상 미리보기"
+        >
           <div className="geometry-pane-heading">
             <span>형상 미리보기</span>
             <div className="geometry-heading-actions">
+              {mobileGeometryOpen && (
+                <button
+                  type="button"
+                  className="icon-button"
+                  aria-label="형상 미리보기 닫기"
+                  title="닫기"
+                  onClick={() => setMobileGeometryOpen(false)}
+                >×</button>
+              )}
               <button
                 type="button"
                 className={geometryStale ? "refresh-button stale" : "refresh-button"}
@@ -1409,15 +1452,15 @@ export default function Home() {
               <div className="issue-summary">
                 <div className={errors ? "summary-icon error" : "summary-icon"}>{errors ? "!" : "✓"}</div>
                 <div>
-                  <strong>{errors ? "입력을 확인해 주세요" : "치명적인 오류가 없습니다"}</strong>
+                  <strong>{errors ? "입력을 확인해 주세요" : "치명적인 오류가 발견되지 않았습니다"}</strong>
                   <span>{errors} errors · {issues.length - errors} warnings</span>
                 </div>
               </div>
-              {geometryStale && (
-                <p className="issues-stale-note">
-                  형상 관련 오류(겹침·빈틈)는 새로고침 이후 기준입니다. 방금 편집한 내용은 아직 반영되지 않았을 수 있습니다.
-                </p>
-              )}
+              <p className="issues-stale-note">
+                {geometryStale
+                  ? "형상 관련 오류(겹침·빈틈)는 새로고침 이후 기준입니다. 방금 편집한 내용은 아직 반영되지 않았을 수 있습니다."
+                  : "형상 겹침·빈틈 검사는 격자 표본점만 확인합니다. 아주 얇은 틈이나 국소적인 겹침은 표본 사이로 빠져나가 놓칠 수 있습니다."}
+              </p>
               {issues.length ? issues.map((issue, index) => (
                 <button
                   className={`issue ${issue.level}`}
@@ -1432,7 +1475,7 @@ export default function Home() {
                   <div><strong>{issue.level === "error" ? "오류" : "권장 사항"}</strong><p>{issue.message}</p></div>
                 </button>
               )) : (
-                <div className="all-clear">모든 기본 검사를 통과했습니다.</div>
+                <div className="all-clear">표본 검사에서 문제가 발견되지 않았습니다.</div>
               )}
             </div>
           </div>
@@ -2500,27 +2543,34 @@ function ResultsPanel({
       <div className="results-bar">
         <div className="results-tabs" role="tablist" aria-label="불러온 결과 파일">
           {cases.map((item) => (
-            <button
+            // 닫기 버튼을 탭 버튼 "안"에 role="button" span 으로 넣으면 유효하지 않은 HTML이고
+            // (button 안의 button), 브라우저 대부분에서 Tab 키로 닫기에 도달할 수 없다.
+            // 그래서 탭 선택 버튼과 닫기 버튼을 이 감싸는 요소의 형제로 둔다.
+            <div
               key={item.id}
-              role="tab"
-              aria-selected={active?.id === item.id}
               className={`result-tab ${active?.id === item.id ? "active" : ""} ${item.error ? "broken" : item.worstStatus}`}
-              onClick={() => onPickActive(item.id)}
-              title={item.dir ? `${item.dir}/${item.fileName}` : item.fileName}
             >
-              <span className={`status-dot ${item.error ? "bad" : item.worstStatus}`} />
-              <span className="result-tab-name">{item.label}</span>
-              {/* 폴더가 다르면 이름이 겹칠 수 있으므로 마지막 폴더를 함께 보여준다. */}
-              {item.dir && <span className="result-tab-dir">{item.dir.split("/").pop()}</span>}
-              <span
+              <button
+                type="button"
+                role="tab"
+                aria-selected={active?.id === item.id}
+                className="result-tab-select"
+                onClick={() => onPickActive(item.id)}
+                title={item.dir ? `${item.dir}/${item.fileName}` : item.fileName}
+              >
+                <span className={`status-dot ${item.error ? "bad" : item.worstStatus}`} />
+                <span className="result-tab-name">{item.label}</span>
+                {/* 폴더가 다르면 이름이 겹칠 수 있으므로 마지막 폴더를 함께 보여준다. */}
+                {item.dir && <span className="result-tab-dir">{item.dir.split("/").pop()}</span>}
+              </button>
+              <button
+                type="button"
                 className="result-tab-close"
-                role="button"
-                tabIndex={0}
                 aria-label={`${item.label} 닫기`}
-                onClick={(event) => { event.stopPropagation(); onRemove(item.id); }}
-                onKeyDown={(event) => { if (event.key === "Enter") { event.stopPropagation(); onRemove(item.id); } }}
-              >×</span>
-            </button>
+                title="닫기"
+                onClick={() => onRemove(item.id)}
+              >×</button>
+            </div>
           ))}
         </div>
         <button className="button ghost" onClick={onOpen}><Icon>＋</Icon> 추가</button>
@@ -2609,7 +2659,14 @@ function ResultsPanel({
               <h2>기준 대비 반응도가 (Δρ)</h2>
               <p className="section-note">
                 제어드럼·제어봉 배치 연구의 최종 산출물입니다. 두 계산이 독립이므로 오차는 √(σ₁²+σ₂²)로 전파됩니다.
-                기준보다 반응도가 낮으면 음수(삽입 효과)입니다.
+                기준보다 반응도가 낮으면 음수(삽입 효과)입니다. Δρ($)는 케이스마다 다른 β<sub>eff</sub>가 아니라
+                <strong> 기준 케이스의 β<sub>eff</sub></strong>
+                {(() => {
+                  const referenceCase = worth.find((row) => row.isReference)?.case;
+                  return referenceCase?.betaEff !== undefined
+                    ? ` (${(referenceCase.betaEff * 1e5).toFixed(0)} pcm)`
+                    : "";
+                })()} 하나로 통일해 나눈 값입니다.
               </p>
               <label className="reference-picker">
                 <span>기준 케이스</span>

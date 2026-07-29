@@ -91,6 +91,26 @@ function tokens(line: string) {
   return stripComment(line).match(/"[^"]*"|\S+/g) ?? [];
 }
 
+function isNumericToken(token: string) {
+  return token.trim() !== "" && Number.isFinite(Number(token));
+}
+
+/**
+ * 이 도구가 형상으로 이해하는 표면 형식의 최소 인수 개수. 여기 없는 형식(box, hex, torx 등
+ * Serpent 는 지원하지만 이 미리보기는 그리지 않는 것들)은 인수 개수를 판단할 근거가 없으므로
+ * 개수는 넘어가고 숫자 여부만 확인한다.
+ */
+const KNOWN_SURFACE_MIN_ARGS: Record<string, number> = {
+  cyl: 3,
+  cylz: 3,
+  sqc: 3,
+  sph: 4,
+  px: 1,
+  py: 1,
+  pz: 1,
+  pad: 4,
+};
+
 function primaryLine(card: SerpentCard) {
   return card.lines.find((line) => {
     const first = tokens(line)[0]?.toLowerCase();
@@ -254,7 +274,24 @@ export function updateCard(
   const originalPrimary = primaryLine(card);
   const primaryIndex = card.lines.indexOf(originalPrimary);
   const leading = primaryIndex > 0 ? card.lines.slice(0, primaryIndex) : [];
-  const lines = [...leading, withComment(primary, data.comment), ...continuation];
+
+  // 카드는 다음 카드가 시작하기 전까지의 빈 줄과 주석을 함께 들고 있는다(파서 참고).
+  // 아래에서 새로 만드는 건 "선두 줄 + (물질이면 조성 목록)" 뿐이므로, 그 뒤에 남아있던
+  // 줄은 원문 그대로 옮겨 붙여야 한다. 그러지 않으면 편집할 때마다 트레일링 주석·빈 줄이
+  // 조용히 사라진다. 물질 카드는 조성 목록 전체가 재생성 대상이므로, 원본에서 실제 조성
+  // 내용을 담은 마지막 줄이 어디까지인지 찾아 그 뒤부터를 "트레일링"으로 취급한다.
+  let regenerateThrough = primaryIndex + 1;
+  if (card.kind === "material") {
+    for (let index = card.lines.length - 1; index > primaryIndex; index -= 1) {
+      if (stripComment(card.lines[index])) {
+        regenerateThrough = index + 1;
+        break;
+      }
+    }
+  }
+  const trailing = card.lines.slice(regenerateThrough);
+
+  const lines = [...leading, withComment(primary, data.comment), ...continuation, ...trailing];
   return { ...card, label: labelFor(card.keyword, primary), lines };
 }
 
@@ -277,6 +314,26 @@ export function validateSerpentInput(cards: SerpentCard[]): ValidationIssue[] {
         issues.push({ level: "error", message: `중복된 표면 이름: ${data.name}`, cardId: card.id });
       }
       surfaces.add(data.name);
+
+      const type = (data.type ?? "").toLowerCase();
+      const values = (data.values ?? "").trim() ? data.values.trim().split(/\s+/) : [];
+      const badValue = values.find((value) => !isNumericToken(value));
+      if (badValue) {
+        issues.push({
+          level: "error",
+          message: `표면 '${data.name}'에 숫자가 아닌 값이 있습니다: '${badValue}'`,
+          cardId: card.id,
+        });
+      } else {
+        const minArgs = KNOWN_SURFACE_MIN_ARGS[type];
+        if (minArgs !== undefined && values.length < minArgs) {
+          issues.push({
+            level: "error",
+            message: `표면 '${data.name}'(${type})은 인수가 ${minArgs}개 이상 필요합니다 (현재 ${values.length}개).`,
+            cardId: card.id,
+          });
+        }
+      }
     }
     // pin·lat·nest 카드와 셀의 소속 유니버스는 모두 fill 대상이 될 수 있다.
     if (["pin", "lat", "nest", "particle", "pbed", "umsh", "solid", "voro"].includes(card.keyword)) {
@@ -288,6 +345,31 @@ export function validateSerpentInput(cards: SerpentCard[]): ValidationIssue[] {
         issues.push({ level: "error", message: `중복된 물질 이름: ${data.name}`, cardId: card.id });
       }
       materials.add(data.name);
+
+      if (data.density && !isNumericToken(data.density)) {
+        issues.push({
+          level: "error",
+          message: `물질 '${data.name}'의 밀도가 숫자가 아닙니다: '${data.density}'`,
+          cardId: card.id,
+        });
+      }
+
+      for (const line of (data.composition ?? "").split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        const [nuclide, fraction] = trimmed.split(/\s+/);
+        // stripComment 는 `%` 뒤만 지우고 `/* ... */` 블록 주석은 모른다. 이런 블록 주석이
+        // 조성 목록 안에 있으면 그 줄들도 "조성"으로 넘어오므로, 첫 토큰이 실제 핵종 형식
+        // (예: 92235.09c)일 때만 분율을 검사해 주석 잔재를 오탐하지 않게 한다.
+        if (!parseNuclideId(nuclide)) continue;
+        if (fraction === undefined || !isNumericToken(fraction)) {
+          issues.push({
+            level: "error",
+            message: `물질 '${data.name}'의 핵종 '${nuclide}' 분율이 숫자가 아닙니다: '${fraction ?? "(없음)"}'`,
+            cardId: card.id,
+          });
+        }
+      }
     }
     if (card.kind === "cell") {
       if (cellNames.has(data.name)) {
@@ -321,6 +403,20 @@ export function validateSerpentInput(cards: SerpentCard[]): ValidationIssue[] {
         issues.push({
           level: "error",
           message: `정의되지 않은 유니버스 '${target}'을 채웁니다.`,
+          cardId: card.id,
+        });
+      }
+    }
+
+    if (!region.trim()) {
+      issues.push({ level: "error", message: "영역식이 없습니다.", cardId: card.id });
+    } else {
+      const openCount = (region.match(/\(/g) ?? []).length;
+      const closeCount = (region.match(/\)/g) ?? []).length;
+      if (openCount !== closeCount) {
+        issues.push({
+          level: "error",
+          message: `괄호가 맞지 않습니다: 여는 괄호 ${openCount}개, 닫는 괄호 ${closeCount}개.`,
           cardId: card.id,
         });
       }

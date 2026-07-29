@@ -194,8 +194,25 @@ function estimatorCheck(entries: Map<string, ResultEntry>): HealthCheck | null {
 function buildChecks(entries: Map<string, ResultEntry>, keff?: Stat): HealthCheck[] {
   const checks: HealthCheck[] = [];
 
+  // keff 가 아예 없으면 이 파일로 무엇도 판단할 수 없다. res.m 형식은 맞지만(파싱은 됐지만)
+  // 실질적으로 빈 파일이거나 다른 종류의 출력일 수 있으므로, 값이 없다는 사실 자체를
+  // "정상"의 근거로 삼지 않고 명시적인 실패 항목으로 남긴다.
+  if (!keff) {
+    checks.push({
+      label: "k_eff",
+      status: "bad",
+      detail: "IMP_KEFF/ABS_KEFF/COL_KEFF/ANA_KEFF 중 어느 것도 없습니다 — 임계도 계산 결과가 아니거나 파일이 잘렸습니다.",
+    });
+  }
+
   const completed = scalar(entries, "SIMULATION_COMPLETED");
-  if (completed !== undefined) {
+  if (completed === undefined) {
+    checks.push({
+      label: "계산 완료",
+      status: "warn",
+      detail: "SIMULATION_COMPLETED 항목이 없습니다 — 정상 종료 여부를 확인할 수 없습니다.",
+    });
+  } else {
     checks.push({
       label: "계산 완료",
       status: completed === 1 ? "ok" : "bad",
@@ -204,7 +221,13 @@ function buildChecks(entries: Map<string, ResultEntry>, keff?: Stat): HealthChec
   }
 
   const lost = scalar(entries, "LOST_PARTICLES");
-  if (lost !== undefined) {
+  if (lost === undefined) {
+    checks.push({
+      label: "입자 손실",
+      status: "warn",
+      detail: "LOST_PARTICLES 항목이 없습니다 — 입자 손실 여부를 확인할 수 없습니다.",
+    });
+  } else {
     checks.push({
       label: "입자 손실",
       status: lost === 0 ? "ok" : "bad",
@@ -431,12 +454,15 @@ export function buildWorthTable(cases: ResultCase[], referenceId: string): Worth
     }
     const deltaRho = item.rho.value - reference.rho.value;
     const sigma = Math.hypot(item.rho.abs, reference.rho.abs);
+    // 달러는 기준 케이스의 β_eff 하나로 통일해서 나눈다. 행마다 자기 β_eff 를 쓰면 같은
+    // 표 안에서 $ 값의 기준이 케이스마다 달라져 서로 더하거나 비교할 수 없게 된다.
+    const dollars = reference.betaEff ? deltaRho / 1e5 / reference.betaEff : undefined;
     return {
       case: item,
       isReference: item.id === reference.id,
       deltaRho,
       sigma,
-      dollars: item.betaEff ? deltaRho / 1e5 / item.betaEff : undefined,
+      dollars,
     };
   });
 }
