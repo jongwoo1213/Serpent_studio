@@ -44,4 +44,7 @@ next-env.d.ts
 
 # 단일 HTML 배포 산출물 (build:standalone 이 만드는 중간·최종 파일)
 /dist-standalone/
-/release/
+# release/ 디렉터리 자체를 막으면 아래 예외가 안 먹으므로 내용물만 막는다.
+/release/*
+# 다만 최종 결과물 하나는 GitHub에서 바로 받아 쓸 수 있게 예외로 둔다.
+!/release/serpent-studio.html
