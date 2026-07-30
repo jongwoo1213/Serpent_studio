@@ -65,3 +65,38 @@ test("buildWorthTable converts every row's Δρ to dollars using the reference c
   // 통과하는 거짓 양성을 막는다.
   assert.notEqual(usingReferenceBeta, usingOwnBeta);
 });
+
+test("buildSpectrum handles a descending MICRO_E grid and drops Serpent's 1E+37 infinity bound", () => {
+  // 회귀 방지: 기본 168군(누설 보정) 구조는 MICRO_E 가 1E+37 부터 0 까지 내림차순으로
+  // 찍힌다. 예전에는 오름차순만 가정해 high > low 검사에서 전부 걸러져 스펙트럼이
+  // 통째로 비었다. 아래는 그 구조를 축소한 4군 픽스처.
+  const src = [
+    `MICRO_NG (idx, 1)        = 4 ;`,
+    `MICRO_E  (idx, [1:  5])  = [  1.00000E+37  1.00000E+01  1.00000E+00  1.00000E-01  0.00000E+00 ];`,
+    `INF_MICRO_FLX (idx, [1: 8]) = [  1.0E+03 0.02  2.0E+05 0.01  3.0E+05 0.01  4.0E+04 0.03 ];`,
+    ``,
+  ].join("\n");
+  const c = buildResultCase("desc_res.m", src, "id-desc");
+
+  // 4군 중 1E+37 상한(첫 군)과 0 하한(마지막 군)은 로그축에 못 그리므로 2군만 남는다.
+  assert.equal(c.spectrum.length, 2);
+  assert.ok(c.spectrum.every((bin) => bin.low < bin.high));
+  assert.ok(c.spectrum.every((bin) => bin.high < 1e10));
+  // 두 번째 군 [1, 10] MeV: 2.0E+05 / ln(10) 이어야 한다.
+  assert.ok(Math.abs(c.spectrum[0].perLethargy - 2.0e5 / Math.log(10)) < 1e-6);
+});
+
+test("buildSpectrum still reads an ascending MICRO_E grid unchanged", () => {
+  const src = [
+    `MICRO_NG (idx, 1)       = 2 ;`,
+    `MICRO_E  (idx, [1:  3]) = [  1.00000E-01  1.00000E+00  1.00000E+01 ];`,
+    `INF_MICRO_FLX (idx, [1: 4]) = [  5.0E+04 0.01  6.0E+04 0.01 ];`,
+    ``,
+  ].join("\n");
+  const c = buildResultCase("asc_res.m", src, "id-asc");
+
+  assert.equal(c.spectrum.length, 2);
+  assert.equal(c.spectrum[0].low, 0.1);
+  assert.equal(c.spectrum[0].high, 1);
+  assert.ok(Math.abs(c.spectrum[0].perLethargy - 5.0e4 / Math.log(10)) < 1e-6);
+});

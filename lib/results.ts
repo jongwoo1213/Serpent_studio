@@ -86,6 +86,9 @@ export type ResultCase = {
 
 const NUMBER = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
 
+/** Serpent 가 "무한대" 경계로 쓰는 값(1E+37)을 걸러내기 위한 기준. */
+const PSEUDO_INFINITE_ENERGY = 1e10;
+
 /** res.m 한 줄을 변수 이름과 값으로 분해한다. */
 function parseLine(line: string): ResultEntry | null {
   const match = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*idx\s*,[^)]*\)\s*=\s*(.*?);?\s*$/.exec(line);
@@ -311,7 +314,16 @@ function buildPhysics(entries: Map<string, ResultEntry>) {
   return rows;
 }
 
-/** 70군 중성자속을 단위 렙서지당 값으로 환산한다. 스펙트럼 그림용. */
+/**
+ * 미세군 중성자속을 단위 렙서지당 값으로 환산한다. 스펙트럼 그림용.
+ *
+ * 군 수는 MICRO_E 길이에서 그대로 따라가므로 70군이든 168군이든 상관없다.
+ * 다만 MICRO_E 의 정렬 방향은 파일마다 다르다 — 기본 70군 구조는 오름차순으로,
+ * 누설 보정에 쓰는 기본 168군 구조는 내림차순(1E+37 부터)으로 찍힌다. 그래서
+ * 경계 두 개를 그대로 [하한, 상한]으로 믿지 않고 min/max 로 정규화한다.
+ * INF_MICRO_FLX 는 어느 쪽이든 MICRO_E 와 같은 순서의 [값, 오차] 쌍이므로
+ * 첨자로 짝지으면 된다.
+ */
 function buildSpectrum(entries: Map<string, ResultEntry>): SpectrumBin[] {
   const flux = entries.get("INF_MICRO_FLX")?.numbers;
   const grid = entries.get("MICRO_E")?.numbers;
@@ -322,11 +334,13 @@ function buildSpectrum(entries: Map<string, ResultEntry>): SpectrumBin[] {
 
   const bins: SpectrumBin[] = [];
   for (let g = 0; g < groups; g += 1) {
-    // MICRO_E 는 오름차순, INF_MICRO_FLX 도 같은 순서로 [값, 오차] 쌍이다.
-    const low = grid[g];
-    const high = grid[g + 1];
+    const low = Math.min(grid[g], grid[g + 1]);
+    const high = Math.max(grid[g], grid[g + 1]);
     const value = flux[g * 2];
     if (!(low > 0) || !(high > low) || !Number.isFinite(value)) continue;
+    // Serpent 는 무한대를 1E+37 로, 하한 0 을 그대로 찍는다. 이런 가짜 경계를 가진
+    // 양 끝 군은 로그축에 그릴 수 없으므로(1e37 하나가 축 전체를 삼킨다) 버린다.
+    if (high >= PSEUDO_INFINITE_ENERGY) continue;
     bins.push({ low, high, perLethargy: value / Math.log(high / low) });
   }
   return bins.some((bin) => bin.perLethargy > 0) ? bins : [];
