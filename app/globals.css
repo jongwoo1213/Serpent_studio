@@ -220,6 +220,8 @@ button { color: inherit; }
   padding: 0.3rem 0.5rem; font-size: var(--fs-md); line-height: 1; cursor: pointer;
 }
 .icon-button:hover { background: #e6ece9; }
+.icon-button:disabled { opacity: 0.35; cursor: default; }
+.icon-button:disabled:hover { background: transparent; }
 
 .add-menu {
   position: absolute; z-index: 5; top: 2.8rem; right: 0.6rem; width: 12.5rem;
@@ -1042,6 +1044,13 @@ button { color: inherit; }
 .worth-table .num.strong { font-weight: 700; }
 .worth-table .num small { margin-left: 0.25rem; color: var(--muted-soft); font-size: var(--fs-micro); }
 .worth-table tr.is-reference { background: var(--green-tint); }
+.delayed-table tr.total-row {
+  border-top: 1px solid var(--line);
+  background: var(--green-tint);
+  font-weight: 700;
+}
+.result-source { color: var(--muted-soft); font-family: var(--mono); }
+.result-error-note { margin: 0.5rem 0 0; color: var(--muted-soft); font-size: var(--fs-micro); }
 
 .ref-tag {
   padding: 0.0625rem 0.3125rem;

@@ -5,6 +5,7 @@ import {
   CSSProperties,
   DragEvent as ReactDragEvent,
   PointerEvent as ReactPointerEvent,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -21,6 +22,7 @@ import {
   hasOutsideCell,
   materialAtPoint,
   materialColor,
+  padAngleRange,
   parseSerpentInput,
   parseGeometryModel,
   parseNuclideId,
@@ -685,6 +687,49 @@ const GEOMETRY_WIDTH_DEFAULT = 420;
 const GEOMETRY_WIDTH_MIN = 300;
 const GEOMETRY_WIDTH_MAX = 800;
 
+const WORKSPACE_STORAGE_KEY = "serpent-studio-workspace-v1";
+
+type WorkspaceSnapshot = {
+  source: string;
+  fileName: string;
+  geometrySource: string;
+  selectedId: string;
+  view: "builder" | "source" | "results";
+  results: IngestedFile[];
+  inputs: IngestedFile[];
+  detectors: [string, Detector[]][];
+  referenceKey: string;
+  activeResultKey: string;
+};
+
+function savedResultKey(item: { fileName: string; dir: string }) {
+  return `${item.dir}␟${item.fileName}`;
+}
+
+function readWorkspace(): WorkspaceSnapshot | null {
+  const raw = readSetting(WORKSPACE_STORAGE_KEY);
+  if (!raw) return null;
+  try {
+    const saved = JSON.parse(raw) as Partial<WorkspaceSnapshot>;
+    if (typeof saved.source !== "string" || typeof saved.fileName !== "string") return null;
+    if (!Array.isArray(saved.results) || !Array.isArray(saved.inputs) || !Array.isArray(saved.detectors)) return null;
+    return {
+      source: saved.source,
+      fileName: saved.fileName,
+      geometrySource: typeof saved.geometrySource === "string" ? saved.geometrySource : saved.source,
+      selectedId: typeof saved.selectedId === "string" ? saved.selectedId : "",
+      view: saved.view === "source" || saved.view === "results" ? saved.view : "builder",
+      results: saved.results,
+      inputs: saved.inputs,
+      detectors: saved.detectors,
+      referenceKey: typeof saved.referenceKey === "string" ? saved.referenceKey : "",
+      activeResultKey: typeof saved.activeResultKey === "string" ? saved.activeResultKey : "",
+    };
+  } catch {
+    return null;
+  }
+}
+
 export default function Home() {
   const [source, setSource] = useState(SAMPLE_INPUT);
   const [fileName, setFileName] = useState("pwr_pin.inp");
@@ -701,6 +746,8 @@ export default function Home() {
   // 좁은 화면(≤760px)에서 숨는 형상 미리보기 패널을 전체화면 오버레이로 다시 열지 여부.
   const [mobileGeometryOpen, setMobileGeometryOpen] = useState(false);
   const [results, setResults] = useState<ResultCase[]>([]);
+  // ResultCase 는 Map 을 포함해 그대로 JSON 저장할 수 없으므로 원문 파일도 따로 유지한다.
+  const [openedResultFiles, setOpenedResultFiles] = useState<IngestedFile[]>([]);
   const [referenceId, setReferenceId] = useState("");
   const [activeResultId, setActiveResultId] = useState("");
   const [fontScale, setFontScale] = useState(100);
@@ -714,10 +761,20 @@ export default function Home() {
   const [detectorLibrary, setDetectorLibrary] = useState<Map<string, Detector[]>>(new Map());
   const [linkNotice, setLinkNotice] = useState("");
   const [dropping, setDropping] = useState(false);
+  const [workspaceReady, setWorkspaceReady] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const resultInput = useRef<HTMLInputElement>(null);
   /** 우리가 마지막으로 넣어준 입력문. 사용자가 손댄 편집을 덮어쓰지 않기 위해 비교용으로 쓴다. */
   const loadedSource = useRef(SAMPLE_INPUT);
+  // 원문 편집 되돌리기/다시하기 스택. past 의 끝이 가장 최근 이전 상태.
+  const [sourcePast, setSourcePast] = useState<string[]>([]);
+  const [sourceFuture, setSourceFuture] = useState<string[]>([]);
+  // 원문 텍스트영역에서 타이핑하는 동안은 매 키 입력마다 기록을 남기지 않고,
+  // 잠시 멈췄다가 다시 칠 때만 새 되돌리기 지점을 만든다.
+  const typingBurst = useRef<{ active: boolean; timer: ReturnType<typeof setTimeout> | null }>({
+    active: false,
+    timer: null,
+  });
 
   const cards = useMemo(() => parseSerpentInput(source), [source]);
 
@@ -786,6 +843,58 @@ export default function Home() {
     if (savedWidth >= GEOMETRY_WIDTH_MIN && savedWidth <= GEOMETRY_WIDTH_MAX) setGeometryWidth(savedWidth);
   }, []);
 
+  // 브라우저는 새로고침 뒤 File 객체를 되살릴 수 없으므로, 마지막으로 읽은 원문을 저장해
+  // ResultCase 를 다시 만든다. 저장 데이터가 깨졌다면 기본 예제 상태로 자연스럽게 시작한다.
+  useEffect(() => {
+    const saved = readWorkspace();
+    if (!saved) {
+      setWorkspaceReady(true);
+      return;
+    }
+
+    const restoredResults = saved.results.map((file, index) =>
+      buildResultCase(file.name, file.text, `restored-${index}-${file.name}`, file.dir),
+    );
+    const inputLibrary = new Map(saved.inputs.map((file) => [pairKey(file, "input"), file]));
+    const reference = restoredResults.find((item) => savedResultKey(item) === saved.referenceKey);
+    const active = restoredResults.find((item) => savedResultKey(item) === saved.activeResultKey);
+
+    loadedSource.current = saved.source;
+    setSource(saved.source);
+    setFileName(saved.fileName);
+    setGeometrySource(saved.geometrySource);
+    setSelectedId(saved.selectedId);
+    setResults(restoredResults);
+    setOpenedResultFiles(saved.results);
+    setInputLibrary(inputLibrary);
+    setDetectorLibrary(new Map(saved.detectors));
+    setReferenceId(reference?.id ?? restoredResults[0]?.id ?? "");
+    setActiveResultId(active?.id ?? restoredResults[0]?.id ?? "");
+    setView(saved.view === "results" && !restoredResults.length ? "builder" : saved.view);
+    if (saved.fileName !== "pwr_pin.inp" || restoredResults.length) {
+      setLinkNotice("직전에 열었던 작업을 복원했습니다.");
+    }
+    setWorkspaceReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!workspaceReady) return;
+    const reference = results.find((item) => item.id === referenceId);
+    const active = results.find((item) => item.id === activeResultId);
+    writeSetting(WORKSPACE_STORAGE_KEY, JSON.stringify({
+      source,
+      fileName,
+      geometrySource,
+      selectedId,
+      view,
+      results: openedResultFiles,
+      inputs: [...inputLibrary.values()],
+      detectors: [...detectorLibrary.entries()],
+      referenceKey: reference ? savedResultKey(reference) : "",
+      activeResultKey: active ? savedResultKey(active) : "",
+    } satisfies WorkspaceSnapshot));
+  }, [workspaceReady, source, fileName, geometrySource, selectedId, view, openedResultFiles, inputLibrary, detectorLibrary, results, referenceId, activeResultId]);
+
   // rem 기반 스타일이므로 루트 글씨 크기를 바꾸면 여백과 패널 폭까지 함께 확대된다.
   useEffect(() => {
     document.documentElement.style.fontSize = `${(ROOT_FONT_SIZE * fontScale) / 100}px`;
@@ -838,9 +947,90 @@ export default function Home() {
     );
   }
 
+  const MAX_SOURCE_HISTORY = 300;
+
+  function pushSourceHistory(previous: string) {
+    setSourcePast((past) => {
+      const next = [...past, previous];
+      return next.length > MAX_SOURCE_HISTORY ? next.slice(next.length - MAX_SOURCE_HISTORY) : next;
+    });
+    setSourceFuture([]);
+  }
+
+  /** 원문을 되돌리기 스택에 기록하며 바꾼다. coalesce 는 타이핑처럼 연속된 입력을
+   * 한 번의 되돌리기 지점으로 묶을 때 쓴다(잠시 멈추면 다음 타이핑부터 새 지점). */
+  function updateSource(next: string, options: { coalesce?: boolean } = {}) {
+    if (next === source) return;
+    const burst = typingBurst.current;
+    if (options.coalesce) {
+      if (!burst.active) {
+        pushSourceHistory(source);
+        burst.active = true;
+      }
+      if (burst.timer) clearTimeout(burst.timer);
+      burst.timer = setTimeout(() => {
+        burst.active = false;
+        burst.timer = null;
+      }, 800);
+    } else {
+      if (burst.timer) clearTimeout(burst.timer);
+      burst.active = false;
+      burst.timer = null;
+      pushSourceHistory(source);
+    }
+    setSource(next);
+  }
+
+  /** 새 파일을 불러오거나 샘플로 되돌릴 때는 이전 문서의 되돌리기 이력을 들고 있을 이유가 없다. */
+  function resetSourceHistory() {
+    if (typingBurst.current.timer) clearTimeout(typingBurst.current.timer);
+    typingBurst.current = { active: false, timer: null };
+    setSourcePast([]);
+    setSourceFuture([]);
+  }
+
+  const undoSource = useCallback(() => {
+    setSourcePast((past) => {
+      if (!past.length) return past;
+      const previous = past[past.length - 1];
+      setSourceFuture((future) => [source, ...future]);
+      setSource(previous);
+      return past.slice(0, -1);
+    });
+  }, [source]);
+
+  const redoSource = useCallback(() => {
+    setSourceFuture((future) => {
+      if (!future.length) return future;
+      const [next, ...rest] = future;
+      setSourcePast((past) => [...past, source]);
+      setSource(next);
+      return rest;
+    });
+  }, [source]);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (!(event.ctrlKey || event.metaKey)) return;
+      const key = event.key.toLowerCase();
+      if (key === "z" && event.shiftKey) {
+        event.preventDefault();
+        redoSource();
+      } else if (key === "z") {
+        event.preventDefault();
+        undoSource();
+      } else if (key === "y") {
+        event.preventDefault();
+        redoSource();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [undoSource, redoSource]);
+
   function replaceCard(card: SerpentCard) {
     const next = cards.map((item) => (item.id === card.id ? card : item));
-    setSource(serializeCards(next));
+    updateSource(serializeCards(next));
   }
 
   function handleField(key: string, value: string) {
@@ -850,7 +1040,7 @@ export default function Home() {
 
   function addCard(type: string) {
     const nextSource = source.trimEnd() + (CARD_TEMPLATES[type] ?? "");
-    setSource(nextSource);
+    updateSource(nextSource);
     const nextCards = parseSerpentInput(nextSource);
     setSelectedId(nextCards[nextCards.length - 1]?.id ?? "");
     setShowAdd(false);
@@ -865,6 +1055,7 @@ export default function Home() {
   function loadInput(file: IngestedFile) {
     loadedSource.current = file.text;
     setSource(file.text);
+    resetSourceHistory();
     // 파일을 새로 여는 것은 편집 중 타이핑이 아니라 완전히 새 내용이므로 곧바로 반영한다.
     setGeometrySource(file.text);
     setFileName(file.name);
@@ -962,6 +1153,10 @@ export default function Home() {
         setReferenceId((id) => (merged.some((item) => item.id === id) ? id : merged[0]?.id ?? ""));
         return merged;
       });
+      setOpenedResultFiles((current) => {
+        const kept = current.filter((item) => !batch.results.some((file) => file.name === item.name && file.dir === item.dir));
+        return [...kept, ...batch.results];
+      });
       setActiveResultId(loaded[0].id);
     } else {
       // 입력문만 들어온 경우, 이미 열려 있는 결과 중 같은 이름이 있으면 그 탭으로 옮긴다.
@@ -1038,6 +1233,12 @@ export default function Home() {
   }
 
   function removeResult(id: string) {
+    const removed = results.find((item) => item.id === id);
+    if (removed) {
+      setOpenedResultFiles((current) =>
+        current.filter((file) => file.name !== removed.fileName || file.dir !== removed.dir),
+      );
+    }
     setResults((current) => {
       const next = current.filter((item) => item.id !== id);
       setReferenceId((currentId) => (next.some((item) => item.id === currentId) ? currentId : next[0]?.id ?? ""));
@@ -1276,6 +1477,20 @@ export default function Home() {
               >◫</button>
               <button
                 className="icon-button"
+                title={sourcePast.length ? `되돌리기 (Ctrl+Z) · ${sourcePast.length}개` : "되돌릴 편집이 없습니다"}
+                aria-label="편집 되돌리기"
+                disabled={!sourcePast.length}
+                onClick={undoSource}
+              >⟲</button>
+              <button
+                className="icon-button"
+                title={sourceFuture.length ? `다시 실행 (Ctrl+Shift+Z) · ${sourceFuture.length}개` : "다시 실행할 편집이 없습니다"}
+                aria-label="편집 다시 실행"
+                disabled={!sourceFuture.length}
+                onClick={redoSource}
+              >⟳</button>
+              <button
+                className="icon-button"
                 title="샘플로 되돌리기"
                 onClick={() => {
                   if (
@@ -1286,6 +1501,7 @@ export default function Home() {
                   }
                   loadedSource.current = SAMPLE_INPUT;
                   setSource(SAMPLE_INPUT);
+                  resetSourceHistory();
                   setGeometrySource(SAMPLE_INPUT);
                 }}
               >↶</button>
@@ -1315,7 +1531,7 @@ export default function Home() {
                 aria-label="Serpent 원문 입력"
                 spellCheck={false}
                 value={source}
-                onChange={(event) => setSource(event.target.value)}
+                onChange={(event) => updateSource(event.target.value, { coalesce: true })}
               />
             </div>
           ) : selected ? (
@@ -1925,8 +2141,7 @@ function GeometryPreview({
       for (const surface of model.surfaces.values()) {
         if (surface.type !== "pad") continue;
         const v = surface.values;
-        const start = v[4] ?? 0;
-        const end = v[5] ?? 360;
+        const { start, end } = padAngleRange(v);
         const middle = (((start + end) / 2) * Math.PI) / 180;
         const middleRadius = ((v[2] ?? 0) + (v[3] ?? 0)) / 2;
         const sampleX = (v[0] ?? 0) + Math.cos(middle) * middleRadius;
@@ -2048,7 +2263,7 @@ function GeometryPreview({
       if (basis === "xy" && ["cyl", "cylz", "sqc"].includes(activeSurface.type)) {
         const centerX = v[0] ?? 0;
         const centerY = v[1] ?? 0;
-        const radius = activeSurface.type === "sqc" ? (v[2] ?? 0) : (v.at(-1) ?? 0);
+        const radius = v[2] ?? 0;
         const center = toCanvas(centerX, centerY);
         const edge = toCanvas(centerX + radius, centerY);
         if (activeSurface.type === "sqc") {
@@ -2062,7 +2277,8 @@ function GeometryPreview({
         }
         drawDimension(center, edge, `${activeSurface.id} · ${activeSurface.type === "sqc" ? "반폭" : "R"} ${radius.toFixed(3)} cm`);
       } else if (basis === "xy" && activeSurface.type === "pad") {
-        const angle = ((((v[4] ?? 0) + (v[5] ?? 360)) / 2) * Math.PI) / 180;
+        const angular = padAngleRange(v);
+        const angle = (((angular.start + angular.end) / 2) * Math.PI) / 180;
         const centerX = v[0] ?? 0;
         const centerY = v[1] ?? 0;
         const inner = v[2] ?? 0;
@@ -2108,16 +2324,22 @@ function GeometryPreview({
           drawDimension(toCanvas(0, 0), toCanvas(0, coordinate), `${activeSurface.id} · d ${Math.abs(coordinate).toFixed(3)} cm`);
         } else if ((basis === "xz" || basis === "yz") && ["cyl", "cylz"].includes(activeSurface.type)) {
           const centerCoordinate = basis === "xz" ? (v[0] ?? 0) : (v[1] ?? 0);
-          const radius = v.at(-1) ?? 0;
+          const radius = v[2] ?? 0;
+          const zMin = v.length >= 5 ? Math.min(v[3] ?? verticalMax - vSpan, v[4] ?? verticalMax) : verticalMax - vSpan;
+          const zMax = v.length >= 5 ? Math.max(v[3] ?? verticalMax - vSpan, v[4] ?? verticalMax) : verticalMax;
+          const zMiddle = (zMin + zMax) / 2;
           const leftX = toCanvas(centerCoordinate - radius, 0).x;
           const rightX = toCanvas(centerCoordinate + radius, 0).x;
+          const topY = toCanvas(0, zMax).y;
+          const bottomY = toCanvas(0, zMin).y;
           context.beginPath();
-          context.moveTo(leftX, plotTop);
-          context.lineTo(leftX, plotTop + plotHeight);
-          context.moveTo(rightX, plotTop);
-          context.lineTo(rightX, plotTop + plotHeight);
+          context.rect(leftX, topY, rightX - leftX, bottomY - topY);
           context.stroke();
-          drawDimension(toCanvas(centerCoordinate, 0), toCanvas(centerCoordinate + radius, 0), `${activeSurface.id} · R ${radius.toFixed(3)} cm`);
+          drawDimension(
+            toCanvas(centerCoordinate, zMiddle),
+            toCanvas(centerCoordinate + radius, zMiddle),
+            `${activeSurface.id} · R ${radius.toFixed(3)} cm`,
+          );
         } else {
           context.setLineDash([]);
           drawLabel(width * 0.72, labelFont * 3, `${activeSurface.id} · ${surfaceDetails(activeSurface).dimension}`);
@@ -2131,9 +2353,10 @@ function GeometryPreview({
     const v = surface.values;
     if (surface.type === "cyl" || surface.type === "cylz") {
       const centerDistance = Math.hypot(v[0] ?? 0, v[1] ?? 0);
+      const axialRange = v.length >= 5 ? ` · z ${(v[3] ?? 0).toFixed(2)}…${(v[4] ?? 0).toFixed(2)}` : "";
       return {
         position: `(${(v[0] ?? 0).toFixed(2)}, ${(v[1] ?? 0).toFixed(2)})`,
-        dimension: `R ${(v.at(-1) ?? 0).toFixed(3)} · 중심거리 ${centerDistance.toFixed(3)}`,
+        dimension: `R ${(v[2] ?? 0).toFixed(3)} · 중심거리 ${centerDistance.toFixed(3)}${axialRange}`,
       };
     }
     if (surface.type === "pad") {
@@ -2706,6 +2929,55 @@ function ResultsPanel({
               <small>{active.genTimeEstimator || "—"}</small>
             </div>
           </section>
+
+          {active.delayedGroups.length > 0 && (
+            <section className="results-section">
+              <h2>지발중성자 {active.delayedGroups.length}군 상수</h2>
+              <p className="section-note">
+                β<sub>eff,i</sub> 비율은 각 군의 값을 전체 β<sub>eff</sub>로 나눈 값입니다.
+                λ<sub>i</sub>는 전구체 붕괴상수이며 단위는 s<sup>−1</sup>입니다.
+                <span className="result-source"> {active.delayedSource}</span>
+              </p>
+              <div className="table-scroll">
+                <table className="worth-table delayed-table">
+                  <thead>
+                    <tr>
+                      <th>전구체군</th>
+                      <th>β<sub>eff,i</sub> (pcm)</th>
+                      <th>β<sub>eff</sub> 비율</th>
+                      <th>λ<sub>i</sub> (s<sup>−1</sup>)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {active.delayedGroups.map((row) => (
+                      <tr key={row.group}>
+                        <td>Group {row.group}</td>
+                        <td className="num">
+                          {(row.betaEff.value * 1e5).toFixed(3)}
+                          <small>±{(row.betaEff.abs * 1e5).toFixed(3)}</small>
+                        </td>
+                        <td className="num">{(row.share * 100).toFixed(2)} %</td>
+                        <td className="num">
+                          {formatNumber(row.lambda.value, 6)}
+                          <small>±{formatNumber(row.lambda.abs, 3)}</small>
+                        </td>
+                      </tr>
+                    ))}
+                    <tr className="total-row">
+                      <td>전체 / 가중값</td>
+                      <td className="num">{active.betaEff !== undefined ? (active.betaEff * 1e5).toFixed(3) : "—"}</td>
+                      <td className="num">100.00 %</td>
+                      <td className="num">
+                        {active.lambdaEff ? formatNumber(active.lambdaEff.value, 6) : "—"}
+                        {active.lambdaEff && <small>±{formatNumber(active.lambdaEff.abs, 3)}</small>}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <p className="result-error-note">± 값은 res.m의 상대 표준편차를 절대 표준편차로 환산한 1σ입니다.</p>
+            </section>
+          )}
 
           <section className="results-section">
             <h2>계산 건전성</h2>

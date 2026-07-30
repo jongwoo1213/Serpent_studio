@@ -3,8 +3,10 @@ import test from "node:test";
 import {
   classifyPoint,
   diagnoseGeometry,
+  geometryPlotBounds,
   getCardData,
   materialAtPoint,
+  padAngleRange,
   parseGeometryModel,
   parseSerpentInput,
   SAMPLE_INPUT,
@@ -203,6 +205,50 @@ test("sqc uses its third value as half-width and its optional fourth value as co
   assert.equal(materialAtPoint(model, 1.9, 1.9, 0), "air");
   assert.equal(materialAtPoint(model, 2.5, 0, 0), "air");
   assert.deepEqual(diagnoseGeometry(model), []);
+});
+
+test("finite cylz uses the third value as radius and the last two values as z limits", () => {
+  const src = [
+    "surf drum cylz 19.049 108.033 18 -108.49 108.49",
+    "surf outer cylz 19.049 108.033 30 -120 120",
+    "mat steel -8\n26000.09c 1",
+    "mat air -0.001\n7014.09c 1",
+    "cell steel-cell 0 steel -drum",
+    "cell air-cell 0 air drum -outer",
+    "cell outside 0 outside outer",
+  ].join("\n");
+  const model = parseGeometryModel(parseSerpentInput(src));
+
+  assert.equal(materialAtPoint(model, 19.049 + 17.9, 108.033, 0), "steel");
+  assert.equal(materialAtPoint(model, 19.049 + 18.1, 108.033, 0), "air");
+  assert.equal(materialAtPoint(model, 19.049, 108.033, 109), "air");
+
+  const xyBounds = geometryPlotBounds(model, "xy");
+  assert.ok(xyBounds.horizontalMax < 55, `unexpected XY maximum: ${xyBounds.horizontalMax}`);
+  const xzBounds = geometryPlotBounds(model, "xz");
+  assert.ok(xzBounds.verticalMin < -108 && xzBounds.verticalMax > 108);
+});
+
+test("pad angles follow Serpent convention and place the sector toward the core exterior", () => {
+  const rightPad = [109.7, 0, 15, 18, 225, 135];
+  const upperPad = [19.049, 108.033, 15, 18, 145, 55];
+
+  assert.deepEqual(padAngleRange(rightPad), { start: 315, end: 405, sweep: 90 });
+  assert.deepEqual(padAngleRange(upperPad), { start: 35, end: 125, sweep: 90 });
+
+  const src = [
+    "surf padright pad 109.7 0 15 18 225 135",
+    "surf drumright cylz 109.7 0 18",
+    "mat absorber -2.52\n5010.09c 1",
+    "mat moderator -3.5\n12000.09c 1",
+    "cell absorbercell 0 absorber -padright",
+    "cell moderatorcell 0 moderator -drumright padright",
+    "cell outsidecell 0 outside drumright",
+  ].join("\n");
+  const model = parseGeometryModel(parseSerpentInput(src));
+
+  assert.equal(materialAtPoint(model, 109.7 + 16.5, 0, 0), "absorber");
+  assert.equal(materialAtPoint(model, 109.7 - 16.5, 0, 0), "moderator");
 });
 
 test("a 5-parameter cylz is a truncated cylinder: radius is the third value, not the last", () => {

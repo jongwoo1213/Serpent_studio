@@ -935,6 +935,23 @@ function angleInRange(angle: number, start: number, end: number) {
 }
 
 /**
+ * Serpent pad 각도를 화면의 일반적인 atan2 각도로 변환한다.
+ *
+ * pad의 α는 일반적인 +x축 반시계 각도가 아니므로 실제 경계선은 θ = 180° - α다.
+ * 반환하는 end는 start보다 크거나 같도록 풀어 써서 캔버스에서도 짧은 반시계
+ * 부채꼴을 그대로 보간할 수 있게 한다.
+ */
+export function padAngleRange(values: number[]) {
+  const alpha1 = values[4] ?? 0;
+  const alpha2 = values[5] ?? 360;
+  const start = ((180 - alpha1) % 360 + 360) % 360;
+  const normalizedEnd = ((180 - alpha2) % 360 + 360) % 360;
+  let sweep = (normalizedEnd - start + 360) % 360;
+  if (sweep === 0 && Math.abs(alpha2 - alpha1) >= 360) sweep = 360;
+  return { start, end: start + sweep, sweep };
+}
+
+/**
  * 축에 평행한 원통. 인수 3개면 무한 원통, 5개면 축방향으로 잘린 원통이다.
  *
  *   cyl / cylz : x0 y0 r [z0 z1]
@@ -997,10 +1014,11 @@ function surfaceValue(surface: GeometrySurface, x: number, y: number, z: number)
     const dy = y - (v[1] ?? 0);
     const radius = Math.hypot(dx, dy);
     const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+    const angular = padAngleRange(v);
     const inside =
       radius >= (v[2] ?? 0) &&
       radius <= (v[3] ?? 0) &&
-      angleInRange(angle, v[4] ?? 0, v[5] ?? 360);
+      (angular.sweep >= 360 || angleInRange(angle, angular.start, angular.end));
     return inside ? -1 : 1;
   }
   return 1;
@@ -1320,9 +1338,12 @@ export function geometryPlotBounds(model: GeometryModel, basis: PlotBasis): Plot
           ? (v[3] ?? 0)
           : surface.type === "sqc"
             ? (v[2] ?? 0)
-            : (v.at(-1) ?? 0);
+            : (v[2] ?? 0);
       xValues.push((v[0] ?? 0) - radius, (v[0] ?? 0) + radius);
       yValues.push((v[1] ?? 0) - radius, (v[1] ?? 0) + radius);
+      if ((surface.type === "cyl" || surface.type === "cylz") && v.length >= 5) {
+        zValues.push(v[3] ?? 0, v[4] ?? 0);
+      }
     }
     if (surface.type === "sph") {
       const radius = v[3] ?? 0;

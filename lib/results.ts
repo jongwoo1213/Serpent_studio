@@ -39,6 +39,15 @@ export type SpectrumBin = {
   perLethargy: number;
 };
 
+export type DelayedNeutronGroup = {
+  group: number;
+  betaEff: Stat;
+  /** 전체 β_eff 중 이 전구체군이 차지하는 비율. */
+  share: number;
+  /** 전구체 붕괴상수 (s⁻¹). */
+  lambda: Stat;
+};
+
 export type ResultCase = {
   id: string;
   /** 화면에 쓸 짧은 이름. */
@@ -66,6 +75,9 @@ export type ResultCase = {
   /** 반응도 (pcm). */
   rho?: Stat;
   betaEff?: number;
+  delayedGroups: DelayedNeutronGroup[];
+  delayedSource: string;
+  lambdaEff?: Stat;
   /** 반응도 ($). */
   dollars?: number;
   /** 중성자 세대시간 (s). */
@@ -346,6 +358,48 @@ function buildSpectrum(entries: Map<string, ResultEntry>): SpectrumBin[] {
   return bins.some((bin) => bin.perLethargy > 0) ? bins : [];
 }
 
+function buildDelayedGroups(entries: Map<string, ResultEntry>) {
+  const candidates = [
+    ["BETA_EFF", "LAMBDA"],
+    ["ADJ_MEULEKAMP_BETA_EFF", "ADJ_MEULEKAMP_LAMBDA"],
+    ["ADJ_NAUCHI_BETA_EFF", "ADJ_NAUCHI_LAMBDA"],
+    ["ADJ_IFP_IMP_BETA_EFF", "ADJ_IFP_IMP_LAMBDA"],
+    ["ADJ_IFP_ANA_BETA_EFF", "ADJ_IFP_ANA_LAMBDA"],
+  ] as const;
+
+  for (const [betaName, lambdaName] of candidates) {
+    const betaNumbers = entries.get(betaName)?.numbers;
+    const lambdaNumbers = entries.get(lambdaName)?.numbers;
+    const totalBeta = stat(entries, betaName);
+    const lambdaEff = stat(entries, lambdaName);
+    if (!betaNumbers || !lambdaNumbers || !totalBeta || !lambdaEff || !totalBeta.value) continue;
+
+    const available = Math.min(
+      Math.floor(betaNumbers.length / 2) - 1,
+      Math.floor(lambdaNumbers.length / 2) - 1,
+    );
+    const declared = scalar(entries, "PRECURSOR_GROUPS");
+    const count = Math.min(available, declared && declared > 0 ? Math.floor(declared) : available);
+    if (count < 1) continue;
+
+    const groups: DelayedNeutronGroup[] = [];
+    for (let group = 1; group <= count; group += 1) {
+      const betaEff = stat(entries, betaName, group * 2);
+      const lambda = stat(entries, lambdaName, group * 2);
+      if (!betaEff || !lambda) continue;
+      groups.push({
+        group,
+        betaEff,
+        share: betaEff.value / totalBeta.value,
+        lambda,
+      });
+    }
+    if (groups.length) return { groups, source: `${betaName} / ${lambdaName}`, lambdaEff };
+  }
+
+  return { groups: [] as DelayedNeutronGroup[], source: "", lambdaEff: undefined };
+}
+
 /**
  * 탭에 쓸 짧은 라벨을 만든다.
  *
@@ -375,6 +429,8 @@ export function buildResultCase(fileName: string, text_: string, id: string, dir
     completeDate: "",
     keffEstimator: "",
     genTimeEstimator: "",
+    delayedGroups: [],
+    delayedSource: "",
     checks: [],
     worstStatus: "ok",
     physics: [],
@@ -397,6 +453,7 @@ export function buildResultCase(fileName: string, text_: string, id: string, dir
     const ana = entries.get("ANA_KEFF")?.numbers;
     if (ana && ana.length >= 4 && ana[0]) betaEff = 1 - ana[2] / ana[0];
   }
+  const delayed = buildDelayedGroups(entries);
 
   const genTimePick = pick(
     ["ADJ_PERT_GEN_TIME", "ADJ_NAUCHI_GEN_TIME", "ADJ_IFP_GEN_TIME"],
@@ -432,6 +489,9 @@ export function buildResultCase(fileName: string, text_: string, id: string, dir
     keffEstimator: keffPick.source,
     rho,
     betaEff,
+    delayedGroups: delayed.groups,
+    delayedSource: delayed.source,
+    lambdaEff: delayed.lambdaEff,
     dollars: rho && betaEff ? rho.value / 1e5 / betaEff : undefined,
     genTime: genTimePick.value,
     genTimeEstimator: genTimePick.source,

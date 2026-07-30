@@ -66,6 +66,23 @@ test("buildWorthTable converts every row's Δρ to dollars using the reference c
   assert.notEqual(usingReferenceBeta, usingOwnBeta);
 });
 
+test("buildResultCase reads total and six group-wise beta/lambda pairs", () => {
+  const src = [
+    fixture(),
+    `PRECURSOR_GROUPS          (idx, 1)        = 6 ;`,
+    `BETA_EFF                  (idx, [1: 14])  = [ 7.20357E-03 0.01675 2.08450E-04 0.09339 1.17058E-03 0.03867 1.23320E-03 0.04221 2.77999E-03 0.02754 1.31367E-03 0.04045 4.97677E-04 0.06255 ];`,
+    `LAMBDA                    (idx, [1: 14])  = [ 5.04068E-01 0.02397 1.33640E-02 0.00051 3.25559E-02 0.00057 1.21142E-01 0.00030 3.06724E-01 0.00066 8.65092E-01 0.00104 2.91390E+00 0.00195 ];`,
+  ].join("\n");
+  const c = buildResultCase("groups_res.m", src, "groups");
+
+  assert.equal(c.delayedGroups.length, 6);
+  assert.equal(c.delayedSource, "BETA_EFF / LAMBDA");
+  assert.equal(c.delayedGroups[0].betaEff.value, 2.0845e-4);
+  assert.equal(c.delayedGroups[0].lambda.value, 1.3364e-2);
+  assert.ok(Math.abs(c.delayedGroups[0].share - 2.0845e-4 / 7.20357e-3) < 1e-12);
+  assert.equal(c.lambdaEff.value, 5.04068e-1);
+});
+
 test("buildSpectrum handles a descending MICRO_E grid and drops Serpent's 1E+37 infinity bound", () => {
   // 회귀 방지: 기본 168군(누설 보정) 구조는 MICRO_E 가 1E+37 부터 0 까지 내림차순으로
   // 찍힌다. 예전에는 오름차순만 가정해 high > low 검사에서 전부 걸러져 스펙트럼이
