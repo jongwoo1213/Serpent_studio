@@ -2342,9 +2342,17 @@ const SPECTRUM_DECADES = 5;
  *
  * 축 관례는 노심해석 논문을 따랐다. 가로는 eV 로그축, 세로는 단위 렙서지당
  * 중성자속의 로그축이고, 군 데이터이므로 곡선이 아니라 계단으로 그린다.
+ *
+ * 들어온 배열의 정렬 방향은 믿지 않고 여기서 에너지 오름차순으로 세운다.
+ * res.m 의 MICRO_E 는 구조에 따라 오름차순(기본 70군)일 때도, 내림차순
+ * (누설 보정용 168군)일 때도 있다. 뒤집힌 배열을 그대로 쓰면 축 범위가 음수
+ * 폭으로 계산되어 x축 눈금이 한 개도 생성되지 않고 계단도 역방향으로 그려진다.
  */
 function buildSpectrumGeometry(bins: ResultCase["spectrum"]) {
-  const usable = bins.filter((bin) => bin.perLethargy > 0);
+  const usable = bins
+    .filter((bin) => bin.perLethargy > 0)
+    .slice()
+    .sort((a, b) => a.low - b.low);
   if (usable.length < 2) return null;
 
   const width = SPECTRUM_WIDTH;
