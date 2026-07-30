@@ -844,10 +844,24 @@ function surfaceSideBounds(surface: GeometrySurface, positive: boolean): Bounds3
   if (surface.type === "py") return { ...UNBOUNDED, yMax: at(0) };
   if (surface.type === "pz") return { ...UNBOUNDED, zMax: at(0) };
 
-  if (surface.type === "cyl" || surface.type === "cylz") {
-    const r = v.at(-1) ?? 0;
+  // 원통은 반지름이 항상 세 번째 값이고, 인수가 5개면 축방향으로도 잘린다
+  // (surfaceValue 의 cylinderValue 와 같은 규칙이어야 한다).
+  if (surface.type === "cyl" || surface.type === "cylz" || surface.type === "cylx" || surface.type === "cyly") {
+    const r = at(2);
     if (!Number.isFinite(r)) return UNBOUNDED;
-    return { ...UNBOUNDED, xMin: at(0) - r, xMax: at(0) + r, yMin: at(1) - r, yMax: at(1) + r };
+    const axial = v.length >= 5 && Number.isFinite(v[3]) && Number.isFinite(v[4])
+      ? { min: Math.min(v[3], v[4]), max: Math.max(v[3], v[4]) }
+      : { min: -Infinity, max: Infinity };
+    if (surface.type === "cylx") {
+      // cylx y0 z0 r [x0 x1]
+      return { xMin: axial.min, xMax: axial.max, yMin: at(0) - r, yMax: at(0) + r, zMin: at(1) - r, zMax: at(1) + r };
+    }
+    if (surface.type === "cyly") {
+      // cyly x0 z0 r [y0 y1]
+      return { xMin: at(0) - r, xMax: at(0) + r, yMin: axial.min, yMax: axial.max, zMin: at(1) - r, zMax: at(1) + r };
+    }
+    // cyl / cylz x0 y0 r [z0 z1]
+    return { xMin: at(0) - r, xMax: at(0) + r, yMin: at(1) - r, yMax: at(1) + r, zMin: axial.min, zMax: axial.max };
   }
   if (surface.type === "sqc") {
     // sqc x0 y0 d [s]: d가 반폭이고, 마지막 선택 인수 s는 모서리 곡률 반경이다.
@@ -920,16 +934,37 @@ function angleInRange(angle: number, start: number, end: number) {
   return a <= b ? normalized >= a && normalized <= b : normalized >= a || normalized <= b;
 }
 
+/**
+ * 축에 평행한 원통. 인수 3개면 무한 원통, 5개면 축방향으로 잘린 원통이다.
+ *
+ *   cyl / cylz : x0 y0 r [z0 z1]
+ *   cylx       : y0 z0 r [x0 x1]
+ *   cyly       : x0 z0 r [y0 y1]
+ *
+ * 반지름은 축 종류나 인수 개수와 무관하게 항상 세 번째 값이다. 절단 원통에서
+ * 마지막 값(축방향 상한)을 반지름으로 착각하면 원통이 엄청나게 커져서 주변 셀과
+ * 겹친 것처럼 보인다 — 실제로는 정상인 입력이 겹침 오류로 도배되는 원인이었다.
+ *
+ * a·b 는 원통 단면(반경 방향) 좌표, axis 는 원통 축 방향 좌표다.
+ * 반환값이 음수면 표면 안쪽이며, 절단 원통은 반경·축 두 조건의 교집합이므로
+ * 두 부호거리 중 큰 값을 쓴다(둘 다 안쪽일 때만 음수).
+ */
+function cylinderValue(v: number[], a: number, b: number, axis: number) {
+  const radial = Math.hypot(a - (v[0] ?? 0), b - (v[1] ?? 0)) - (v[2] ?? 0);
+  if (v.length < 5) return radial;
+  const low = Math.min(v[3], v[4]);
+  const high = Math.max(v[3], v[4]);
+  return Math.max(radial, low - axis, axis - high);
+}
+
 function surfaceValue(surface: GeometrySurface, x: number, y: number, z: number) {
   const v = surface.values;
-  // 픽셀마다 도는 경로이므로 v.at(-1) 같은 메서드 호출 대신 첨자로 읽는다.
-  const last = v.length ? v[v.length - 1] ?? 0 : 0;
   // `surf NAME inf`는 무한 유니버스의 재료 셀을 만들 때 쓰는 더미 표면이다.
   // 음의 반공간(-NAME)이 전체 공간이 되도록 항상 음수를 반환한다.
   if (surface.type === "inf") return -1;
-  if (surface.type === "cyl" || surface.type === "cylz") {
-    return Math.hypot(x - (v[0] ?? 0), y - (v[1] ?? 0)) - last;
-  }
+  if (surface.type === "cyl" || surface.type === "cylz") return cylinderValue(v, x, y, z);
+  if (surface.type === "cylx") return cylinderValue(v, y, z, x);
+  if (surface.type === "cyly") return cylinderValue(v, x, z, y);
   if (surface.type === "sqc") {
     const dx = Math.abs(x - (v[0] ?? 0));
     const dy = Math.abs(y - (v[1] ?? 0));

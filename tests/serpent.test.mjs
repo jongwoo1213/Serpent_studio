@@ -204,3 +204,54 @@ test("sqc uses its third value as half-width and its optional fourth value as co
   assert.equal(materialAtPoint(model, 2.5, 0, 0), "air");
   assert.deepEqual(diagnoseGeometry(model), []);
 });
+
+test("a 5-parameter cylz is a truncated cylinder: radius is the third value, not the last", () => {
+  // 회귀 방지: 예전에는 마지막 값(축방향 상한)을 반지름으로 읽어서, 반지름 2인
+  // 원통이 반지름 50인 것처럼 부풀어 주변 셀과 전부 겹쳐 보였다.
+  const src = [
+    "surf pin  cylz 0 0 2 -50 50",
+    "surf tank cylz 0 0 10",
+    "surf top  pz 60",
+    "surf bot  pz -60",
+    "mat fuel -1\n1001.09c 1",
+    "mat water -1\n1001.09c 1",
+    "cell pin-cell 0 fuel -pin",
+    "cell water-cell 0 water pin -tank bot -top",
+    "cell outside-cell 0 outside tank : -bot : top",
+  ].join("\n");
+  const model = parseGeometryModel(parseSerpentInput(src));
+
+  // 반지름 2 안쪽(원통 축방향 범위 내)은 연료.
+  assert.equal(materialAtPoint(model, 0, 0, 0), "fuel");
+  assert.equal(materialAtPoint(model, 1.9, 0, 0), "fuel");
+  // 반지름 2 밖은 물 — 예전 버그에서는 여기까지 연료로 잡혔다.
+  assert.equal(materialAtPoint(model, 5, 0, 0), "water");
+  // 축방향으로 잘렸으므로 z=55 에서는 원통 중심축이라도 연료가 아니다.
+  assert.equal(materialAtPoint(model, 0, 0, 55), "water");
+  assert.deepEqual(diagnoseGeometry(model), []);
+});
+
+test("cylx and cyly place their radius third and truncate along their own axis", () => {
+  // cylx: y0 z0 r [x0 x1] / cyly: x0 z0 r [y0 y1]
+  const src = [
+    "surf bx cylx 0 0 2 -5 5",
+    "surf by cyly 0 0 2 -5 5",
+    "surf box sph 0 0 0 20",
+    "mat a -1\n1001.09c 1",
+    "mat b -1\n1001.09c 1",
+    "mat air -0.001\n7014.09c 1",
+    "cell ca 0 a -bx",
+    "cell cb 0 b bx -by",
+    "cell cair 0 air bx by -box",
+    "cell cout 0 outside box",
+  ].join("\n");
+  const model = parseGeometryModel(parseSerpentInput(src));
+
+  // x축 원통: (x=0, y=0, z=0) 은 안쪽, x=8 은 축방향 절단 밖.
+  assert.equal(materialAtPoint(model, 0, 0, 0), "a");
+  assert.equal(materialAtPoint(model, 8, 0, 0), "air");
+  // y축 원통: x축 원통 밖이면서 y축 원통 안쪽인 지점.
+  assert.equal(materialAtPoint(model, 0, 4, 0), "b");
+  // 두 원통 모두 반지름이 2이므로, 반경 방향으로 3 떨어지면 둘 다 밖이다.
+  assert.equal(materialAtPoint(model, 0, 3, 3), "air");
+});
