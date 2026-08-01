@@ -1,0 +1,310 @@
+/**
+ * 앱 UI 한/영 전환.
+ *
+ * 문자열마다 별도 키를 만드는 대신, 화면에 쓰는 한국어 원문 자체를 사전의 키로 쓴다.
+ * `t("버튼 이름")`처럼 기존 리터럴을 그대로 감싸기만 하면 되고, 사전에 아직 없는
+ * 문자열은 조용히 원문(한국어) 그대로 나온다 — 번역이 빠졌다고 화면이 깨지지 않는다.
+ * 카드 그룹 이름처럼 내부적으로 식별자로도 쓰이는 값은 절대 이 사전을 거치지 않는다;
+ * 여기 감싸는 건 오직 "화면에 보여줄 텍스트"뿐이다.
+ */
+
+export type UiLocale = "ko" | "en";
+
+export const UI_DICT: Record<string, string> = {
+  // 상단 바
+  "파일 이름": "File name",
+  "편집 중": "Editing",
+  "글씨 크기 조절": "Font size",
+  "글씨 작게": "Smaller text",
+  "기본 글씨 크기로 되돌리기": "Reset font size",
+  "글씨 크게": "Larger text",
+  "SERPENT 입력문 선택": "Select SERPENT input file",
+  "Serpent 결과 파일 선택": "Select Serpent result files",
+  "Serpent 입력문을 엽니다. 같은 이름의 결과문이 이미 열려 있으면 연결합니다.":
+    "Open a Serpent input file. If a result file with the same name is already open, it will be linked automatically.",
+  "열기": "Open",
+  "결과문(_res.m)을 엽니다. 여러 개를 골라 탭으로 비교할 수 있습니다.":
+    "Open result files (_res.m). Select several to compare them as tabs.",
+  "결과 열기": "Open Results",
+  "내보내기": "Export",
+  "입력 검사": "Validate Input",
+  "안내 닫기": "Dismiss",
+  "여기에 놓으세요": "Drop here",
+  "폴더를 놓으면 이름이 같은 입력문과 결과문을 자동으로 연결합니다.":
+    "Drop a folder to automatically link input and result files that share a name.",
+
+  // 사이드바
+  "모델 구성": "Model Structure",
+  "카드 추가": "Add Card",
+  "카드 검색": "Search cards",
+  "이름 · 값으로 카드 찾기": "Search by name or value",
+  "검색어 지우기": "Clear search",
+  "Serpent 카드": "Serpent cards",
+  "'{q}'와 일치하는 카드가 없습니다.": "No cards match '{q}'.",
+  "카드가 없습니다.": "No cards.",
+  "모델 상태": "Model Status",
+  "{n} 오류": "{n} error(s)",
+  "정상": "OK",
+  "{shown} / {total}개 카드 표시 중": "Showing {shown} / {total} cards",
+  "{total}개 카드 · Serpent 2 형식": "{total} cards · Serpent 2 format",
+
+  // 편집기 탭
+  "구조화 편집": "Structured Editor",
+  "원문 입력": "Raw Input",
+  "결과 분석": "Results",
+  "계산 정리": "Calculation Summary",
+  "형상 미리보기 열기": "Open geometry preview",
+  "되돌리기 (Ctrl+Z) · {n}개": "Undo (Ctrl+Z) · {n}",
+  "되돌릴 편집이 없습니다": "Nothing to undo",
+  "편집 되돌리기": "Undo edit",
+  "다시 실행 (Ctrl+Shift+Z) · {n}개": "Redo (Ctrl+Shift+Z) · {n}",
+  "다시 실행할 편집이 없습니다": "Nothing to redo",
+  "편집 다시 실행": "Redo edit",
+  "샘플로 되돌리기": "Reset to sample",
+  "지금 편집 중인 내용을 버리고 샘플 입력으로 되돌릴까요?": "Discard the current edits and reset to the sample input?",
+
+  // 카드 분류(GROUPS) — name 은 내부적으로 식별자로도 쓰이므로 값 자체는 바꾸지 않고
+  // 화면에 보일 때만 t() 를 거친다.
+  "모델 개요": "Model Overview",
+  "계산 사례를 식별하는 제목 카드": "The title card that identifies this calculation case",
+  "형상 · 경계": "Geometry · Surfaces",
+  "표면·셀·격자로 구성한 CSG 형상": "CSG geometry built from surfaces, cells, and lattices",
+  "물질 · 핵데이터": "Materials · Nuclear Data",
+  "물질 조성과 핵데이터 라이브러리": "Material compositions and nuclear data libraries",
+  "계산 모드 · 조건": "Run Mode · Settings",
+  "입자 수, 경계조건, 연소 등 계산 설정": "Particle counts, boundary conditions, burnup, and other run settings",
+  "소스 · 검출기": "Sources · Detectors",
+  "외부 소스 정의와 결과 집계 검출기": "External source definitions and result-tallying detectors",
+  "시각화 · 출력": "Visualization · Output",
+  "형상 단면도와 출력 파일 옵션": "Geometry plot cross-sections and output file options",
+  "외부 파일 · 연동": "External Files · Coupling",
+  "include 및 외부 해석 코드 연동": "include statements and coupling with external codes",
+  "고급 카드": "Advanced Cards",
+  "위 분류에 속하지 않는 나머지 카드": "Cards that don't fall into the categories above",
+
+  // 구조화 편집 폼의 고정 문구 (카드별 안내 본문 자체는 아직 번역 대상이 아님)
+  "Serpent 원문 입력": "Serpent raw input",
+  "입력 카드의 값을 수정하면 Serpent 원문에 바로 반영됩니다.": "Editing a card's values updates the Serpent source immediately.",
+  "Serpent 매뉴얼 안내": "Serpent manual guidance",
+  "공식 매뉴얼 기반 안내": "Guidance based on the official manual",
+  "현재 입력값 해석": "What the current values mean",
+  "입력값을 수정하면 설명도 즉시 갱신됩니다.": "The explanation updates immediately as you edit the values.",
+  "공식 문법 보기 ↗": "View official syntax ↗",
+  "입력값 편집": "Edit Values",
+  "핵종 조성 해석": "Nuclide composition breakdown",
+  "라이브러리 접미사(예: .09c)가 없어 해석할 수 없습니다.": "Cannot be interpreted — missing a library suffix (e.g. .09c).",
+  "핵종을 입력하면 원소·질량수·라이브러리를 해석해 표시합니다. 예: 92235.09c → 우라늄-235, 라이브러리 09c":
+    "Enter a nuclide to see its element, mass number, and library. Example: 92235.09c → Uranium-235, library 09c",
+
+  "생성된 입력 카드": "Generated Input Card",
+  "원문 입력 탭에서도 직접 수정할 수 있습니다.": "You can also edit this directly in the Raw Input tab.",
+  "편집할 카드를 선택하세요.": "Select a card to edit.",
+  "형상 미리보기 폭 조절": "Resize geometry preview",
+  "형상 미리보기": "Geometry Preview",
+  "형상 미리보기 닫기": "Close geometry preview",
+  "닫기": "Close",
+  "입력이 바뀌었습니다. 눌러서 형상을 다시 그립니다.": "The input has changed. Click to redraw the geometry.",
+  "형상이 최신 상태입니다.": "The geometry preview is up to date.",
+  "새로고침 필요": "Refresh needed",
+  "새로고침": "Refresh",
+  "검사 결과": "Validation Results",
+  "입력을 확인해 주세요": "Please check the input",
+  "치명적인 오류가 발견되지 않았습니다": "No critical errors found",
+  "형상 관련 오류(겹침·빈틈)는 새로고침 이후 기준입니다. 방금 편집한 내용은 아직 반영되지 않았을 수 있습니다.":
+    "Geometry errors (overlaps/gaps) reflect the last refresh — edits since then may not be included yet.",
+  "형상 겹침·빈틈 검사는 격자 표본점만 확인합니다. 아주 얇은 틈이나 국소적인 겹침은 표본 사이로 빠져나가 놓칠 수 있습니다.":
+    "The overlap/gap check only samples a grid of points — very thin gaps or localized overlaps can fall between samples and go undetected.",
+  "오류": "Error",
+  "권장 사항": "Recommendation",
+  "표본 검사에서 문제가 발견되지 않았습니다.": "No issues found in the sample check.",
+  "오류 {n}개": "{n} error(s)",
+  "권장 {n}개": "{n} recommendation(s)",
+  "표본 검사 통과": "Sample check passed",
+
+  "검사 필요": "Check needed",
+  "기본 검증 통과": "Basic validation passed",
+  "실행 콘솔": "Run Console",
+  "입력 검사 콘솔": "Validation Console",
+  "브라우저 버전에서는 문법과 참조 무결성을 검사합니다.": "This browser version checks syntax and reference integrity.",
+  "정식 계산 전에는 설치된 Serpent에서 입력 검사를 다시 수행하세요.": "Re-run input validation in your installed Serpent before an official calculation.",
+
+  // 형상 미리보기 패널
+  "단면": "Cross-section",
+  "단면 위치": "section position",
+  "단면 좌표": "section coordinate",
+  "셀이 겹치거나 어떤 셀에도 속하지 않는 영역을 표시합니다.": "Highlights regions where cells overlap or where no cell is defined.",
+  "문제 영역": "Problem areas",
+  "축소": "Zoom out",
+  "확대": "Zoom in",
+  "전체 보기로 되돌리기": "Reset to full view",
+  "전체": "Fit",
+  "Serpent 입력문에서 생성한 {basis} 재료 평면도": "{basis} material cross-section generated from the Serpent input",
+  "휠 확대 · 드래그 이동": "Scroll to zoom · drag to pan",
+  "가로 {h} · 세로 {v} · 단면 {a} = {z} cm": "Horizontal {h} · Vertical {v} · Section {a} = {z} cm",
+  "겹침": "Overlap",
+  "빈틈 — 어떤 셀에도 속하지 않음": "Gap — not inside any cell",
+  "outside (계산 영역 바깥)": "outside (beyond the modeled region)",
+  "미지원 구조(lat 등)": "Unsupported structure (lat, etc.)",
+  "정의되지 않은 공간": "Undefined space",
+  "도면 위에 커서를 올리면 좌표와 물질이 표시됩니다.": "Hover over the plot to see coordinates and material.",
+  "물질 색상": "Material Colors",
+  "클릭하면 해당 물질만 강조합니다.": "Click to highlight only that material.",
+  "정의된 물질이 없습니다.": "No materials defined.",
+  "빗금은": "Hatching is",
+  "셀 겹침": "cell overlap",
+  "Serpent는 오류 없이 먼저 정의된 셀만 사용합니다.": "Serpent silently uses whichever cell was defined first, without an error.",
+  "단색은": "A solid fill is",
+  "빈틈": "a gap",
+  "실행 중 지오메트리 오류가 납니다.": "This causes a geometry error at run time.",
+  "outside 셀이 없어 빈틈 표시는 꺼져 있습니다.": "gap highlighting is off because there is no outside cell",
+  "{basis} 단면 경계 {n}개": "{n} {basis}-section boundaries",
+  "행을 선택하면 도면에 치수가 표시됩니다.": "Select a row to show its dimensions on the plot.",
+  "현재 단면과 교차하는 지원 표면이 없습니다.": "No supported surfaces intersect the current cross-section.",
+  "이 평면도는 결과 이미지가 아니라 입력문의 표면·셀 Boolean 조건과 물질 색을 픽셀별로 계산해 생성합니다.":
+    "This plot is not a result image — it's computed pixel by pixel from the input's surface/cell Boolean conditions and material colors.",
+  "직교 격자(lat type 1)와 유니버스 평행이동(trans)을 반영하며, 그 밖의 격자 형식과 회전 변환은 아직 지원하지 않습니다.":
+    "It supports rectangular lattices (lat type 1) and universe translation (trans); other lattice types and rotations are not yet supported.",
+  "중심거리": "center distance",
+  "원점거리": "distance from origin",
+  "반폭": "half-width",
+  "모서리 R": "corner R",
+  "경계": "Boundary",
+  "형식": "Type",
+  "기준 위치": "Reference position",
+  "치수 / 거리": "Dimensions / distance",
+
+  // 결과 분석 패널
+  "Serpent 결과 파일을 불러오세요": "Open a Serpent Result File",
+  "계산이 끝나면 생기는": "Once a calculation finishes, opening the",
+  "파일을 열면 keff·반응도·지발중성자분율 같은 주요 결과가 자동으로 정리됩니다.":
+    "it produces automatically summarizes key results like k_eff, reactivity, and the delayed neutron fraction.",
+  "여러 개를 한 번에": "Select several at once",
+  "골라도 됩니다. 각각 탭으로 열리고, 기준 케이스 대비 반응도가(Δρ)를 표로 비교합니다.":
+    "— each opens as its own tab, and reactivity worth (Δρ) is compared against the reference case in a table.",
+  "입력문": "Input file",
+  "은 상단": " — open it separately with",
+  "로 따로 불러옵니다. 이름이 같으면 (": "at the top. If the names match (",
+  ") 자동으로 연결됩니다.": ") it's linked automatically.",
+  "Finder 에서 파일이나 폴더를 이 창에": "You can also",
+  "끌어다 놓아도": "drag and drop",
+  "됩니다.": "files or folders from Finder onto this window.",
+  "결과 파일 열기": "Open Result File",
+  "불러온 결과 파일": "Opened result files",
+  "{name} 닫기": "Close {name}",
+  "추가": "Add",
+  "결과를 읽을 수 없습니다.": "Could not read the result file.",
+  "완료 시각 미상": "completion time unknown",
+  "{pop}개 입자 × {gen}회 활성 사이클": "{pop} particles × {gen} active cycles",
+  "전체 {total}회 중 {skip}회 버림)": "{skip} of {total} discarded)",
+  "{min}분 소요": "{min} min",
+  "검증 통과": "Validated",
+  "확인 필요": "Needs review",
+  "결과 사용 주의": "Use with caution",
+  "연결된 입력문 없음": "No linked input file",
+  "핵심 결과": "Key Results",
+  "실효증배계수": "Effective Multiplication Factor",
+  "반응도": "Reactivity",
+  "반응도 (달러)": "Reactivity ($)",
+  "지발중성자분율": "Delayed Neutron Fraction",
+  "중성자 세대시간": "Neutron Generation Time",
+  "지발중성자 {n}군 상수": "{n}-Group Delayed Neutron Constants",
+  "β": "β",
+  "비율은 각 군의 값을 전체": "share is each group's value divided by the total",
+  "로 나눈 값입니다.": ".",
+  "는 전구체 붕괴상수이며 단위는": "is the precursor decay constant, in units of",
+  "입니다.": ".",
+  "전구체군": "Precursor Group",
+  "비율": "Share",
+  "전체 / 가중값": "Total / Weighted",
+  "± 값은 res.m의 상대 표준편차를 절대 표준편차로 환산한 1σ입니다.": "± values are 1σ, converted from res.m's relative standard deviation to an absolute one.",
+  "계산 건전성": "Calculation Health",
+  "값을 쓰기 전에 확인하는 항목입니다. 하나라도 실패하면 keff 자체를 신뢰할 수 없습니다.":
+    "These are checked before trusting any value here — if even one fails, k_eff itself cannot be trusted.",
+  "기준 대비 반응도가 (Δρ)": "Reactivity Worth vs. Reference (Δρ)",
+  "제어드럼·제어봉 배치 연구의 최종 산출물입니다. 두 계산이 독립이므로 오차는 √(σ₁²+σ₂²)로 전파됩니다.":
+    "This is the final output of control drum/rod placement studies. Since the two calculations are independent, the error propagates as √(σ₁²+σ₂²).",
+  "기준보다 반응도가 낮으면 음수(삽입 효과)입니다. Δρ($)는 케이스마다 다른":
+    "A negative value means lower reactivity than the reference (an insertion effect). Δρ($) is divided by",
+  "가 아니라": ", not by each case's own",
+  "기준 케이스의": "the reference case's",
+  "하나로 통일해 나눈 값입니다.": "— using one shared value for every row.",
+  "기준 케이스": "Reference Case",
+  "케이스": "Case",
+  "기준": "Reference",
+  "노심 물리 특성": "Core Physics Parameters",
+  "INF_MICRO_FLX (군상수)": "INF_MICRO_FLX (group constants)",
+  "중성자속 스펙트럼": "Neutron Flux Spectrum",
+  "출처": "Source",
+  "균질화 유니버스 '{name}'의 ": "For the homogenized universe '{name}', the ",
+  "무한매질 스펙트럼(INF_MICRO_FLX)을 단위 렙서지당 값으로 환산한 결과입니다. 군상수 생성이 켜져 있을 때 자동으로 만들어지는 값이라, 그 유니버스가 전체 모델을 덮지 않으면 모델 전체가 아니라 그 영역만의 스펙트럼입니다.":
+    "infinite-medium spectrum (INF_MICRO_FLX) converted to per-unit-lethargy values. This is produced automatically whenever group constant generation is on — if that universe doesn't cover the whole model, this is the spectrum of just that region, not the whole model.",
+  "검출기": "Detector",
+  "의 에너지 구간별 값을 단위 렙서지당으로 환산한 결과입니다. det 파일 파싱은 VTT 공식 문서의 열 배치만 보고 작성했고 실제 Serpent 출력으로 검증하지는 못했습니다 — 정확한 값인지는 원본 det 파일과 대조해 보세요.":
+    "'s per-energy-bin values converted to per-unit-lethargy. The det file parser was written from VTT's documented column layout alone and has not been verified against real Serpent output — cross-check against the original det file.",
+  "res.m 에서 값 뒤의 두 번째 숫자는 절대오차가 아니라": "In res.m, the second number after a value is not an absolute error but a",
+  "상대 표준편차": "relative standard deviation",
+  "이 화면의 ± 표기는 이미 값과 곱해 절대오차로 환산한 것입니다.": "The ± shown here has already been multiplied by the value to convert it to an absolute error.",
+
+  // 스펙트럼 차트
+  "그룹": "Group",
+  "그래프 위에 마우스를 올리면 해당 에너지군의 값을 보여줍니다.": "Hover over the chart to see the value for that energy group.",
+  "표 닫기": "Hide table",
+  "표로 보기": "View as table",
+  "{n}개 군": "{n} groups",
+  "군": "Group",
+  "하한 (eV)": "Lower (eV)",
+  "상한 (eV)": "Upper (eV)",
+  "렙서지당 중성자속": "Flux per Unit Lethargy",
+
+  // 계산 정리 패널 (문서 자체가 아니라 그 주변 앱 UI)
+  "나중에 같은 계산을 다시 돌릴 수 있도록 입력문 전문·파일 정보·결과를 하나의 마크다운으로 모읍니다.":
+    "Gathers the full input, file info, and results into one markdown file so you can reproduce this calculation later.",
+  "제목": "Title",
+  "비우면 입력문 이름을 씁니다": "Uses the input file's name if left blank",
+  "작성자": "Analyst",
+  "이름": "Name",
+  "파일 위치": "File Location",
+  "브라우저는 보안상 실제 경로를 알려주지 않습니다. 재현하려면 계산을 돌린 디렉터리를 직접 적어야 합니다.":
+    "Browsers don't expose real file paths for security reasons — write in the directory the calculation was run from to make this reproducible.",
+  "비고": "Notes",
+  "이번 계산에서 바꾼 것, 확인할 것 등": "What changed in this run, things to check, etc.",
+  "형상·스펙트럼을 별도 PNG 파일로 함께 받기 (해상도 그대로)": "Also download the geometry and spectrum as separate PNG files (at full resolution)",
+  "형상 미리보기 스냅샷": "Geometry preview snapshot",
+  "형상 이미지 없음": "No geometry image",
+  "탭을 열면 자동으로 찍습니다": "Captured automatically when you open this tab",
+  "형상 미리보기를 다시 찍습니다": "Recapture the geometry preview",
+  "다시 캡처": "Recapture",
+  "형상 미리보기를 새로고침하거나 단면·확대를 바꾼 뒤에는 여기서 다시 찍어야 최신 그림이 들어갑니다. 다운로드 버튼을 누르면 이 그림과 스펙트럼 그림이 마크다운과 함께 별도 PNG 파일로 내려받아집니다 — 같은 폴더에 두어야 마크다운 뷰어에서 그림이 보입니다.":
+    "After refreshing the geometry preview or changing the section/zoom, recapture here to include the latest image. The download button saves this image and the spectrum as separate PNG files alongside the markdown — keep them in the same folder so viewers can display the images.",
+  "입력문 파일 정보 있음{extra}": "Input file info available{extra}",
+  " · 수정 시각 포함": " · includes modified time",
+  " · 수정 시각 없음": " · no modified time",
+  "입력문을 파일로 열지 않아 폴더·수정 시각 없음": "Input wasn't opened as a file, so no folder/modified time",
+  "결과문 {n}건": "{n} result file(s)",
+  "결과문 없음 — 결과 절이 빕니다": "No result files — the results section will be empty",
+  "줄": " lines",
+  "PNG {n}개 별도": "{n} PNG(s) separate",
+  "내려받는 중…": "Downloading…",
+  "미리보기 (내려받는 파일과 동일 — 그림은 별도 PNG 파일로 받습니다)": "Preview (identical to the downloaded file — images are separate PNG files)",
+
+  // 파일을 열고 짝지을 때 뜨는 안내 토스트
+  "직전에 열었던 작업을 복원했습니다.": "Restored your last session.",
+  "검출기 출력 {n}개를 불러와 열려 있는 결과에 연결했습니다.": "Loaded {n} detector output(s) and linked them to the open result.",
+  "검출기 출력 {n}개를 불러왔습니다. 같은 이름의 결과문을 열면 스펙트럼에서 고를 수 있습니다.":
+    "Loaded {n} detector output(s). Open a result file with the same name to select them in the spectrum.",
+  "Serpent 결과문(_res.m)을 찾지 못했습니다.": "Couldn't find a Serpent result file (_res.m).",
+  "Serpent 입력문을 찾지 못했습니다.": "Couldn't find a Serpent input file.",
+  "지금 편집 중인 입력문에 저장하지 않은 변경 사항이 있습니다. 새 입력문을 열면 그 내용이 사라집니다. 계속할까요?":
+    "The input you're editing has unsaved changes. Opening a new input file will discard them. Continue?",
+  " 검출기 출력 {n}개도 함께 연결했습니다.": " Also linked {n} detector output(s).",
+  "결과문 {r}개 · 입력문 {i}개를 불러와 {n}개를 이름으로 연결했습니다.": "Loaded {r} result file(s) and {i} input file(s), linking {n} by name.",
+  "결과문 {n}개를 불러와 이미 열린 입력문에 연결했습니다.": "Loaded {n} result file(s) and linked them to the open input.",
+  "결과문 {n}개를 탭으로 열었습니다.": "Opened {n} result file(s) as tabs.",
+  "입력문을 불러오고 이름이 같은 결과문에 연결했습니다.": "Loaded the input and linked it to the result file with the same name.",
+  "입력문을 불러왔습니다.": "Loaded the input file.",
+};
+
+export function translateUi(ko: string, locale: UiLocale): string {
+  if (locale === "ko") return ko;
+  return UI_DICT[ko] ?? ko;
+}

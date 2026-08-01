@@ -136,6 +136,8 @@ button { color: inherit; }
 .button:hover { background: #f1f5f3; }
 .button.primary { background: var(--green); border-color: var(--green); color: white; }
 .button.primary:hover { background: var(--green-deep); }
+.button:disabled { opacity: 0.6; cursor: default; }
+.button.primary:disabled:hover { background: var(--green); }
 
 /* -------------------------------------------------------------- layout */
 
@@ -433,6 +435,108 @@ button { color: inherit; }
 .source-editor textarea {
   display: block; flex: 1; width: 100%; padding: 1.25rem 1.4rem; resize: none; border: 0; outline: 0;
   background: #0d1e1a; color: #d2e2da; font-family: var(--mono); font-size: var(--fs-sm); line-height: 1.8; tab-size: 2;
+}
+
+/* --------------------------------------------------------- calc summary */
+
+/*
+ * 편집 영역은 형상 미리보기와 폭을 나눠 쓰기 때문에 좌우 2단으로 두면 어느 쪽도
+ * 제대로 안 보인다. 폼을 위쪽 띠로 눕히고 미리보기가 남은 높이를 다 쓰게 한다.
+ */
+.summary-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+/* 폼이 길어져도 미리보기가 사라지지 않도록 높이의 절반까지만 쓴다. */
+.summary-form {
+  flex: 0 1 auto; min-height: 0; max-height: 50%; overflow: auto; padding: 1.25rem 1.35rem 1.5rem;
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.85rem 1rem;
+  align-content: start;
+}
+/* 설명과 긴 입력은 두 칸을 모두 차지한다. */
+.summary-intro, .summary-field.wide { grid-column: 1 / -1; }
+.summary-intro-row { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.summary-intro h1 { margin: 0; font-family: Georgia, serif; font-size: var(--fs-lg); font-weight: 500; }
+.summary-intro p { margin: 0.4rem 0 0; color: var(--muted); font-size: var(--fs-xs); line-height: 1.65; }
+
+/* 한/영 토글. 글씨 크기 조절 버튼과 같은 분절형(segmented) 모양을 재사용한다. */
+.locale-toggle {
+  flex: 0 0 auto; display: inline-flex; overflow: hidden;
+  border: 1px solid var(--line); border-radius: var(--radius-sm); background: white;
+}
+.locale-toggle button {
+  padding: 0.3rem 0.6rem; border: 0; border-right: 1px solid var(--line);
+  background: transparent; color: #46584f; font-size: var(--fs-micro); font-weight: 800; cursor: pointer;
+}
+.locale-toggle button:last-child { border-right: 0; }
+.locale-toggle button:hover { background: var(--mint); }
+.locale-toggle button.active { background: var(--green); color: white; }
+.locale-toggle button.active:hover { background: var(--green-deep); }
+
+.summary-field { display: flex; flex-direction: column; gap: 0.35rem; min-width: 0; }
+.summary-field > span { font-size: var(--fs-micro); font-weight: 800; letter-spacing: .04em; }
+.summary-field input, .summary-field textarea {
+  width: 100%; padding: 0.5rem 0.6rem; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: white; font-family: inherit; font-size: var(--fs-xs); line-height: 1.6; resize: vertical;
+}
+.summary-field textarea { font-family: var(--mono); }
+.summary-field input:focus, .summary-field textarea:focus { outline: 2px solid var(--green); outline-offset: -1px; }
+.summary-field small { color: var(--muted); font-size: var(--fs-micro); line-height: 1.55; }
+
+.summary-checkbox { display: flex; align-items: center; gap: 0.5rem; font-size: var(--fs-xs); }
+.summary-checkbox input { width: auto; }
+
+.summary-thumb {
+  margin-top: 0.6rem; padding: 0.6rem; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: #f7f9f8;
+}
+.summary-thumb img {
+  display: block; max-width: 100%; max-height: 10rem; width: auto; height: auto;
+  border-radius: var(--radius-sm); border: 1px solid var(--line-soft); background: #0d1e1a;
+}
+.summary-thumb-empty {
+  display: flex; align-items: center; justify-content: center; height: 4rem;
+  color: var(--muted); font-size: var(--fs-xs); border: 1px dashed var(--line); border-radius: var(--radius-sm);
+}
+.summary-thumb-info {
+  margin-top: 0.5rem; display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+  font-size: var(--fs-micro); color: var(--muted);
+}
+.summary-thumb-info .icon-button { padding: 0.2rem 0.45rem; font-size: var(--fs-micro); }
+.summary-thumb small { display: block; margin-top: 0.4rem; color: var(--muted); font-size: var(--fs-micro); line-height: 1.5; }
+.summary-companion-list {
+  margin: 0.5rem 0 0; padding: 0; list-style: none;
+  display: flex; flex-direction: column; gap: 0.15rem;
+}
+.summary-companion-list li { font-size: var(--fs-micro); color: var(--muted); }
+.summary-companion-list code { font-family: var(--mono); color: var(--ink, inherit); }
+
+/*
+ * 내려받기 줄. 폼이 아무리 길어져도 이 줄은 늘 보인다.
+ * 폭이 모자라면 칩을 눌러 세로로 찌그러뜨리는 대신 버튼을 아랫줄로 내린다.
+ */
+.summary-actions {
+  flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem 0.75rem;
+  padding: 0.7rem 1.35rem; border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line);
+  background: var(--paper, #fbfcfb);
+}
+.summary-status { flex: 1 1 15rem; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
+.summary-chip {
+  padding: 0.3rem 0.55rem; border-radius: var(--radius-sm);
+  font-size: var(--fs-micro); line-height: 1.4; white-space: nowrap;
+}
+.summary-chip.ok { background: var(--mint); color: #1d4b3c; }
+.summary-chip.warn { background: #fdf2dd; color: #7a5312; }
+
+.summary-download { flex: 1 1 auto; justify-content: center; white-space: nowrap; }
+.summary-size { color: var(--muted); font-size: var(--fs-micro); white-space: nowrap; }
+
+.summary-preview { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+/*
+ * 마크다운 표는 열 위치가 맞아야 읽히므로 줄바꿈하지 않고 가로 스크롤을 준다.
+ * pre-wrap 으로 두면 파일명이 중간에서 잘려 오히려 읽기 어려워진다.
+ */
+.summary-preview pre {
+  flex: 1; margin: 0; padding: 1.1rem 1.3rem; overflow: auto;
+  background: #0d1e1a; color: #d2e2da; font-family: var(--mono); font-size: var(--fs-xs);
+  line-height: 1.65; tab-size: 2; white-space: pre;
 }
 
 /* ------------------------------------------------------------- preview */

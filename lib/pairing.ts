@@ -14,9 +14,17 @@ export type FileKind = "result" | "input" | "ignored";
 export type IngestedFile = {
   /** 파일 이름 (경로 제외). */
   name: string;
-  /** 같은 폴더인지 판단하기 위한 디렉터리 경로. 단일 선택이면 빈 문자열. */
+  /**
+   * 같은 폴더인지 판단하기 위한 디렉터리 경로. 단일 선택이면 빈 문자열.
+   *
+   * 브라우저는 보안상 실제 절대 경로를 절대 알려주지 않는다. 폴더를 통째로 고르거나
+   * 끌어다 놓았을 때 얻는 상대 경로가 전부이므로, 재현에 필요한 전체 경로는
+   * 사용자가 직접 적어 보완해야 한다.
+   */
   dir: string;
   text: string;
+  /** 파일 수정 시각 (epoch ms). 브라우저가 알려주지 않으면 undefined. */
+  lastModified?: number;
 };
 
 /** Serpent 가 함께 뱉지만 이 도구가 다루지 않는 산출물. */
@@ -92,7 +100,12 @@ export function directoryOf(file: File) {
 
 export async function readFiles(files: File[]): Promise<IngestedFile[]> {
   return Promise.all(
-    files.map(async (file) => ({ name: file.name, dir: directoryOf(file), text: await file.text() })),
+    files.map(async (file) => ({
+      name: file.name,
+      dir: directoryOf(file),
+      text: await file.text(),
+      lastModified: file.lastModified || undefined,
+    })),
   );
 }
 
@@ -133,7 +146,14 @@ export async function readDropped(items: DataTransferItemList): Promise<Ingested
       const file = await new Promise<File | null>((resolve) =>
         entry.file!((value) => resolve(value), () => resolve(null)),
       );
-      if (file) collected.push({ name: file.name, dir, text: await file.text() });
+      if (file) {
+        collected.push({
+          name: file.name,
+          dir,
+          text: await file.text(),
+          lastModified: file.lastModified || undefined,
+        });
+      }
       return;
     }
     if (!entry.isDirectory || !entry.createReader) return;

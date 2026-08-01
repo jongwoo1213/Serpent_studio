@@ -4,9 +4,11 @@ import {
   ChangeEvent,
   CSSProperties,
   DragEvent as ReactDragEvent,
+  forwardRef,
   PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useMemo,
   useRef,
   useState,
@@ -43,6 +45,21 @@ import {
   ResultCase,
 } from "../lib/results";
 import {
+  EMPTY_SUMMARY_META,
+  renderSpectrumSvg,
+  renderSummaryMarkdown,
+  SPECTRUM_SVG_HEIGHT,
+  SPECTRUM_SVG_WIDTH,
+  summaryFileName,
+  SummaryGeometryImage,
+  SummaryImagePlan,
+  SummaryMeta,
+  tCheck,
+  tError,
+  tPhysicsHint,
+  tPhysicsLabel,
+} from "../lib/summary";
+import {
   IngestedFile,
   ingest,
   pairKey,
@@ -57,6 +74,7 @@ import {
   looksLikeDetectorFile,
   parseDetectorFile,
 } from "../lib/detectors";
+import { translateUi, UiLocale } from "../lib/i18n";
 
 const GROUPS = [
   { name: "모델 개요", icon: "▤", hint: "계산 사례를 식별하는 제목 카드" },
@@ -689,18 +707,42 @@ const GEOMETRY_WIDTH_MAX = 800;
 
 const WORKSPACE_STORAGE_KEY = "serpent-studio-workspace-v1";
 
+type EditorView = "builder" | "source" | "results" | "summary";
+
+const EDITOR_VIEWS: EditorView[] = ["builder", "source", "results", "summary"];
+
 type WorkspaceSnapshot = {
   source: string;
   fileName: string;
   geometrySource: string;
   selectedId: string;
-  view: "builder" | "source" | "results";
+  view: EditorView;
   results: IngestedFile[];
   inputs: IngestedFile[];
   detectors: [string, Detector[]][];
   referenceKey: string;
   activeResultKey: string;
+  /** 계산 정리에서 사람이 채운 항목. 다음 방문에도 그대로 남아야 한다. */
+  summaryMeta: SummaryMeta;
+  /** 입력문을 파일로 연 경우의 원본 정보(폴더·수정 시각). */
+  inputFileInfo?: IngestedFile;
 };
+
+/** 저장된 값이 깨졌어도 정리 화면이 죽지 않도록 문자열 필드만 골라 받는다. */
+function readSummaryMeta(value: unknown): SummaryMeta {
+  if (!value || typeof value !== "object") return EMPTY_SUMMARY_META;
+  const saved = value as Partial<SummaryMeta>;
+  const text = (field: keyof SummaryMeta) =>
+    typeof saved[field] === "string" ? (saved[field] as string) : "";
+  return {
+    title: text("title"),
+    analyst: text("analyst"),
+    location: text("location"),
+    notes: text("notes"),
+    includeImages: typeof saved.includeImages === "boolean" ? saved.includeImages : true,
+    locale: saved.locale === "en" ? "en" : "ko",
+  };
+}
 
 function savedResultKey(item: { fileName: string; dir: string }) {
   return `${item.dir}␟${item.fileName}`;
@@ -718,23 +760,90 @@ function readWorkspace(): WorkspaceSnapshot | null {
       fileName: saved.fileName,
       geometrySource: typeof saved.geometrySource === "string" ? saved.geometrySource : saved.source,
       selectedId: typeof saved.selectedId === "string" ? saved.selectedId : "",
-      view: saved.view === "source" || saved.view === "results" ? saved.view : "builder",
+      view: EDITOR_VIEWS.includes(saved.view as EditorView) ? (saved.view as EditorView) : "builder",
       results: saved.results,
       inputs: saved.inputs,
       detectors: saved.detectors,
       referenceKey: typeof saved.referenceKey === "string" ? saved.referenceKey : "",
       activeResultKey: typeof saved.activeResultKey === "string" ? saved.activeResultKey : "",
+      summaryMeta: readSummaryMeta(saved.summaryMeta),
+      inputFileInfo: saved.inputFileInfo,
     };
   } catch {
     return null;
   }
 }
 
+/**
+ * 문자열/Blob 을 파일로 내려받는다. 이 앱 곳곳의 다운로드 버튼이 공유하는 마지막 단계.
+ *
+ * click() 직후 바로 revokeObjectURL 을 부르면, 브라우저가 그 blob 을 아직 다 읽기 전에
+ * URL 이 무효화되어 다운로드가 아무 오류 없이 조용히 실패할 수 있다 — 파일 하나만 받을
+ * 때는 거의 안 드러나지만, "계산 정리" 다운로드처럼 여러 파일을 연달아 트리거하면 그중
+ * 일부만 받아지는 형태로 나타난다. 정리(remove/revoke)를 다음 틱으로 미뤄서 브라우저가
+ * 다운로드를 큐에 넣을 시간을 준다.
+ */
+function triggerDownload(data: BlobPart, filename: string, mime?: string) {
+  const blob = data instanceof Blob ? data : new Blob([data], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  setTimeout(() => {
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }, 2000);
+}
+
+function wait(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+/** 캔버스에서 이미 만든 `data:image/png;base64,...` 를 그대로 Blob 으로 바꾼다. */
+async function dataUrlToBlob(dataUrl: string) {
+  return (await fetch(dataUrl)).blob();
+}
+
+/**
+ * 스펙트럼 SVG(순수 문자열)를 PNG 로 래스터화한다. 벡터 그림이라 원래 "해상도"가
+ * 없으므로, 화면보다 선명하게 받을 수 있도록 2배로 그린다. data: URI 로 만든
+ * `<img>`는 동일 출처로 취급되어 캔버스를 오염시키지 않는다.
+ */
+function svgToPngBlob(svg: string, width: number, height: number, scale = 2): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = width * scale;
+      canvas.height = height * scale;
+      const context = canvas.getContext("2d");
+      if (!context) { reject(new Error("2D 캔버스 컨텍스트를 만들 수 없습니다.")); return; }
+      context.scale(scale, scale);
+      context.drawImage(image, 0, 0, width, height);
+      canvas.toBlob((blob) => {
+        if (blob) resolve(blob); else reject(new Error("PNG 인코딩에 실패했습니다."));
+      }, "image/png");
+    };
+    image.onerror = () => reject(new Error("스펙트럼 SVG 를 이미지로 불러오지 못했습니다."));
+    image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  });
+}
+
 export default function Home() {
   const [source, setSource] = useState(SAMPLE_INPUT);
   const [fileName, setFileName] = useState("pwr_pin.inp");
   const [selectedId, setSelectedId] = useState<string>("");
-  const [view, setView] = useState<"builder" | "source" | "results">("builder");
+  const [view, setView] = useState<EditorView>("builder");
+  const [summaryMeta, setSummaryMeta] = useState<SummaryMeta>(EMPTY_SUMMARY_META);
+  /** 입력문을 파일로 열었을 때의 원본 정보. 정리 문서의 폴더·수정 시각이 여기서 나온다. */
+  const [inputFileInfo, setInputFileInfo] = useState<IngestedFile | undefined>(undefined);
+  // 형상 미리보기는 캔버스라 순수 함수로 다시 그릴 수 없다. 계산 정리 문서에 쓸 스냅샷은
+  // "계산 정리" 탭을 열 때나 새로고침 버튼을 눌렀을 때만 찍는다 — 매 렌더마다 캔버스를
+  // PNG 로 인코딩하면(팬/줌 중에도) 그 자체로 무거워지기 때문이다.
+  const geometryPreviewRef = useRef<GeometryPreviewHandle>(null);
+  const [geometryImage, setGeometryImage] = useState<SummaryGeometryImage | undefined>(undefined);
   // 형상 미리보기 패널의 폭(px). 좌우 리사이저로 조절하고 다음 방문에도 기억한다.
   const [geometryWidth, setGeometryWidth] = useState(GEOMETRY_WIDTH_DEFAULT);
   const [resizingGeometry, setResizingGeometry] = useState(false);
@@ -751,6 +860,8 @@ export default function Home() {
   const [referenceId, setReferenceId] = useState("");
   const [activeResultId, setActiveResultId] = useState("");
   const [fontScale, setFontScale] = useState(100);
+  const [uiLocale, setUiLocale] = useState<UiLocale>("ko");
+  const t = useCallback((ko: string) => translateUi(ko, uiLocale), [uiLocale]);
   const [showAdd, setShowAdd] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -812,7 +923,11 @@ export default function Home() {
   const errors = issues.filter((issue) => issue.level === "error").length;
   const issuesTone = errors ? "bad" : issues.length ? "warn" : "ok";
   // 형상 겹침·빈틈 검사는 격자 표본점만 확인하므로 "정상"이라고 단정하지 않는다.
-  const issuesLabel = errors ? `오류 ${errors}개` : issues.length ? `권장 ${issues.length}개` : "표본 검사 통과";
+  const issuesLabel = errors
+    ? t("오류 {n}개").replace("{n}", String(errors))
+    : issues.length
+      ? t("권장 {n}개").replace("{n}", String(issues.length))
+      : t("표본 검사 통과");
 
   const groupedCards = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -833,10 +948,17 @@ export default function Home() {
     if (selected && selected.id !== selectedId) setSelectedId(selected.id);
   }, [selected, selectedId]);
 
+  // 로컬 저장소에서 복원하는 간단한 UI 설정들. 하나로 묶어 마운트 시 한 번만 돈다.
   useEffect(() => {
     const savedScale = Number(readSetting("serpent-studio-font-scale"));
     if (savedScale >= FONT_SCALE_MIN && savedScale <= FONT_SCALE_MAX) setFontScale(savedScale);
+    if (readSetting("serpent-studio-ui-locale") === "en") setUiLocale("en");
   }, []);
+
+  function changeUiLocale(locale: UiLocale) {
+    setUiLocale(locale);
+    writeSetting("serpent-studio-ui-locale", locale);
+  }
 
   useEffect(() => {
     const savedWidth = Number(readSetting("serpent-studio-geometry-width"));
@@ -870,9 +992,18 @@ export default function Home() {
     setDetectorLibrary(new Map(saved.detectors));
     setReferenceId(reference?.id ?? restoredResults[0]?.id ?? "");
     setActiveResultId(active?.id ?? restoredResults[0]?.id ?? "");
+    setSummaryMeta(saved.summaryMeta);
+    setInputFileInfo(saved.inputFileInfo);
     setView(saved.view === "results" && !restoredResults.length ? "builder" : saved.view);
     if (saved.fileName !== "pwr_pin.inp" || restoredResults.length) {
-      setLinkNotice("직전에 열었던 작업을 복원했습니다.");
+      // 이 효과는 마운트 시 한 번만 돌아 아직 저장된 UI 언어를 반영하기 전일 수 있으므로,
+      // t() 클로저 대신 저장된 값을 직접 읽어 판단한다(그래야 이 effect 를 t 의존으로
+      // 다시 걸 필요가 없다).
+      setLinkNotice(
+        readSetting("serpent-studio-ui-locale") === "en"
+          ? translateUi("직전에 열었던 작업을 복원했습니다.", "en")
+          : "직전에 열었던 작업을 복원했습니다.",
+      );
     }
     setWorkspaceReady(true);
   }, []);
@@ -892,8 +1023,10 @@ export default function Home() {
       detectors: [...detectorLibrary.entries()],
       referenceKey: reference ? savedResultKey(reference) : "",
       activeResultKey: active ? savedResultKey(active) : "",
+      summaryMeta,
+      inputFileInfo,
     } satisfies WorkspaceSnapshot));
-  }, [workspaceReady, source, fileName, geometrySource, selectedId, view, openedResultFiles, inputLibrary, detectorLibrary, results, referenceId, activeResultId]);
+  }, [workspaceReady, source, fileName, geometrySource, selectedId, view, openedResultFiles, inputLibrary, detectorLibrary, results, referenceId, activeResultId, summaryMeta, inputFileInfo]);
 
   // rem 기반 스타일이므로 루트 글씨 크기를 바꾸면 여백과 패널 폭까지 함께 확대된다.
   useEffect(() => {
@@ -1060,6 +1193,8 @@ export default function Home() {
     setGeometrySource(file.text);
     setFileName(file.name);
     setSelectedId("");
+    // 계산 정리에 쓸 폴더·수정 시각은 File 객체를 읽는 이 시점에만 알 수 있다.
+    setInputFileInfo(file);
   }
 
   /** 형상 미리보기를 지금 편집 중인 원문으로 다시 계산한다. */
@@ -1100,14 +1235,14 @@ export default function Home() {
         const linked = detectorKeys.filter(({ key }) => results.some((item) => resultKey(item) === key)).length;
         setLinkNotice(
           linked
-            ? `검출기 출력 ${detectorFiles.length}개를 불러와 열려 있는 결과에 연결했습니다.`
-            : `검출기 출력 ${detectorFiles.length}개를 불러왔습니다. 같은 이름의 결과문을 열면 스펙트럼에서 고를 수 있습니다.`,
+            ? t("검출기 출력 {n}개를 불러와 열려 있는 결과에 연결했습니다.").replace("{n}", String(detectorFiles.length))
+            : t("검출기 출력 {n}개를 불러왔습니다. 같은 이름의 결과문을 열면 스펙트럼에서 고를 수 있습니다.").replace("{n}", String(detectorFiles.length)),
         );
       } else {
         setLinkNotice(
           intent === "result"
-            ? "Serpent 결과문(_res.m)을 찾지 못했습니다."
-            : "Serpent 입력문을 찾지 못했습니다.",
+            ? t("Serpent 결과문(_res.m)을 찾지 못했습니다.")
+            : t("Serpent 입력문을 찾지 못했습니다."),
         );
       }
       return;
@@ -1117,8 +1252,8 @@ export default function Home() {
     if (!batch.results.length && !batch.inputs.length) {
       setLinkNotice(
         intent === "result"
-          ? "Serpent 결과문(_res.m)을 찾지 못했습니다."
-          : "Serpent 입력문을 찾지 못했습니다.",
+          ? t("Serpent 결과문(_res.m)을 찾지 못했습니다.")
+          : t("Serpent 입력문을 찾지 못했습니다."),
       );
       return;
     }
@@ -1128,7 +1263,7 @@ export default function Home() {
     const willReplaceEditor = !batch.results.length && batch.inputs.length > 0;
     if (willReplaceEditor && !sourceIsUntouched()) {
       const proceed = window.confirm(
-        "지금 편집 중인 입력문에 저장하지 않은 변경 사항이 있습니다. 새 입력문을 열면 그 내용이 사라집니다. 계속할까요?",
+        t("지금 편집 중인 입력문에 저장하지 않은 변경 사항이 있습니다. 새 입력문을 열면 그 내용이 사라집니다. 계속할까요?"),
       );
       if (!proceed) return;
     }
@@ -1177,17 +1312,20 @@ export default function Home() {
     setView(
       intent === "input" ? "builder" : intent === "result" ? "results" : batch.results.length ? "results" : "builder",
     );
-    const detectorSuffix = detectorFiles.length ? ` 검출기 출력 ${detectorFiles.length}개도 함께 연결했습니다.` : "";
+    const detectorSuffix = detectorFiles.length
+      ? t(" 검출기 출력 {n}개도 함께 연결했습니다.").replace("{n}", String(detectorFiles.length))
+      : "";
     setLinkNotice(
       (batch.results.length && batch.inputs.length
-        ? `결과문 ${batch.results.length}개 · 입력문 ${batch.inputs.length}개를 불러와 ${linked}개를 이름으로 연결했습니다.`
+        ? t("결과문 {r}개 · 입력문 {i}개를 불러와 {n}개를 이름으로 연결했습니다.")
+          .replace("{r}", String(batch.results.length)).replace("{i}", String(batch.inputs.length)).replace("{n}", String(linked))
         : batch.results.length
           ? linked
-            ? `결과문 ${batch.results.length}개를 불러와 이미 열린 입력문에 연결했습니다.`
-            : `결과문 ${batch.results.length}개를 탭으로 열었습니다.`
+            ? t("결과문 {n}개를 불러와 이미 열린 입력문에 연결했습니다.").replace("{n}", String(batch.results.length))
+            : t("결과문 {n}개를 탭으로 열었습니다.").replace("{n}", String(batch.results.length))
           : linked
-            ? `입력문을 불러오고 이름이 같은 결과문에 연결했습니다.`
-            : `입력문을 불러왔습니다.`) + detectorSuffix,
+            ? t("입력문을 불러오고 이름이 같은 결과문에 연결했습니다.")
+            : t("입력문을 불러왔습니다.")) + detectorSuffix,
     );
   }
 
@@ -1248,12 +1386,94 @@ export default function Home() {
   }
 
   function downloadInput() {
-    const blob = new Blob([source], { type: "text/plain;charset=utf-8" });
-    const anchor = document.createElement("a");
-    anchor.href = URL.createObjectURL(blob);
-    anchor.download = fileName;
-    anchor.click();
-    URL.revokeObjectURL(anchor.href);
+    triggerDownload(source, fileName, "text/plain;charset=utf-8");
+  }
+
+  /**
+   * 계산 정리 마크다운 + 그 마크다운이 참조하는 PNG 파일 계획. 이미지는 마크다운 안에
+   * 박아 넣지 않고 별도 파일로 내려받으므로, 마크다운이 쓰는 파일 이름과 실제로 만들어
+   * 내려받는 파일 이름이 여기서부터 하나로 정해진다.
+   */
+  const summaryResult = useMemo(() => renderSummaryMarkdown({
+    meta: summaryMeta,
+    inputName: fileName,
+    inputText: source,
+    inputFile: inputFileInfo,
+    cards,
+    cases: results,
+    referenceId,
+    resultFiles: openedResultFiles,
+    geometryImage,
+  }), [summaryMeta, fileName, source, inputFileInfo, cards, results, referenceId, openedResultFiles, geometryImage]);
+  const summaryMarkdown = summaryResult.markdown;
+  // 한글·± 같은 다중바이트 문자가 많아 .length(UTF-16 코드 유닛)로는 실제 파일 크기와
+  // 어긋난다. 다운로드되는 Blob 과 같은 기준(UTF-8 바이트)으로 재야 한다.
+  const summaryByteSize = useMemo(
+    () => new TextEncoder().encode(summaryMarkdown).length,
+    [summaryMarkdown],
+  );
+
+  const [downloadingSummary, setDownloadingSummary] = useState(false);
+
+  /**
+   * 계산 정리 md · 형상 PNG · (케이스별) 스펙트럼 PNG 를 각각 별도 파일로 내려받는다.
+   * 이미지를 마크다운에 박아 넣으면 일반 텍스트 편집기로 열었을 때 base64 덩어리가
+   * 본문을 가로막으므로, 이미지는 항상 이름이 정해진 별도 파일로 받고 마크다운은
+   * 그 파일 이름만 상대경로로 참조한다 — 같은 폴더에 두면 렌더러에서 그대로 보인다.
+   */
+  async function downloadSummary() {
+    setDownloadingSummary(true);
+    try {
+      triggerDownload(
+        summaryMarkdown,
+        summaryFileName(fileName, undefined, summaryMeta.locale),
+        "text/markdown;charset=utf-8",
+      );
+      // 브라우저가 "자동으로 여러 파일 다운로드" 방지 로직을 걸 때가 있어, 트리거를
+      // 붙여 쏘면 뒤쪽 일부가 조용히 씹힐 수 있다. 파일 사이에 짧게 쉬어 각 다운로드가
+      // 개별적으로 시작되게 한다.
+      await wait(350);
+
+      const { images } = summaryResult;
+      if (images.geometry && geometryImage) {
+        const blob = await dataUrlToBlob(geometryImage.dataUrl);
+        triggerDownload(blob, images.geometry);
+        await wait(350);
+      }
+      for (const spec of images.spectra) {
+        const item = results.find((r) => r.id === spec.caseId);
+        const svg = item ? renderSpectrumSvg(item.spectrum) : null;
+        if (!svg) continue;
+        const blob = await svgToPngBlob(svg, SPECTRUM_SVG_WIDTH, SPECTRUM_SVG_HEIGHT);
+        triggerDownload(blob, spec.fileName);
+        await wait(350);
+      }
+    } finally {
+      setDownloadingSummary(false);
+    }
+  }
+
+  function updateSummaryMeta(field: keyof SummaryMeta, value: string) {
+    setSummaryMeta((current) => ({ ...current, [field]: value }));
+  }
+
+  function setSummaryIncludeImages(value: boolean) {
+    setSummaryMeta((current) => ({ ...current, includeImages: value }));
+  }
+
+  function setSummaryLocale(locale: SummaryMeta["locale"]) {
+    setSummaryMeta((current) => ({ ...current, locale }));
+  }
+
+  /**
+   * 형상 미리보기 캔버스를 찍는다. 캔버스는 순수 함수로 다시 그릴 수 없으므로 이 시점에
+   * 화면에 보이던 그대로를 스냅샷으로 둔다. "계산 정리" 탭을 열 때, 그리고 패널의
+   * 수동 새로고침 버튼을 눌렀을 때만 부른다 — 팬/줌을 할 때마다 부르면 그때마다 PNG
+   * 인코딩이 돌아 형상 미리보기 자체가 버벅이게 된다.
+   */
+  function captureGeometryImage() {
+    const snapshot = geometryPreviewRef.current?.captureImage();
+    if (snapshot) setGeometryImage(snapshot);
   }
 
   function runValidation() {
@@ -1272,8 +1492,8 @@ export default function Home() {
       {dropping && (
         <div className="drop-veil" aria-hidden="true">
           <div>
-            <strong>여기에 놓으세요</strong>
-            <span>폴더를 놓으면 이름이 같은 입력문과 결과문을 자동으로 연결합니다.</span>
+            <strong>{t("여기에 놓으세요")}</strong>
+            <span>{t("폴더를 놓으면 이름이 같은 입력문과 결과문을 자동으로 연결합니다.")}</span>
           </div>
         </div>
       )}
@@ -1288,33 +1508,45 @@ export default function Home() {
         <div className="file-pill">
           <Icon>▤</Icon>
           <input
-            aria-label="파일 이름"
+            aria-label={t("파일 이름")}
             value={fileName}
             onChange={(event) => setFileName(event.target.value)}
           />
           <span className="saved-dot" />
-          <span>편집 중</span>
+          <span>{t("편집 중")}</span>
         </div>
         <div className="top-actions">
-          <div className="font-size-control" role="group" aria-label="글씨 크기 조절">
+          <div className="locale-toggle" role="group" aria-label="Interface language">
             <button
               type="button"
-              aria-label="글씨 작게"
-              title="글씨 작게"
+              className={uiLocale === "ko" ? "active" : ""}
+              onClick={() => changeUiLocale("ko")}
+            >한국어</button>
+            <button
+              type="button"
+              className={uiLocale === "en" ? "active" : ""}
+              onClick={() => changeUiLocale("en")}
+            >English</button>
+          </div>
+          <div className="font-size-control" role="group" aria-label={t("글씨 크기 조절")}>
+            <button
+              type="button"
+              aria-label={t("글씨 작게")}
+              title={t("글씨 작게")}
               disabled={fontScale <= FONT_SCALE_MIN}
               onClick={() => changeFontScale(fontScale - FONT_SCALE_STEP)}
             >A−</button>
             <button
               type="button"
               className="font-size-value"
-              aria-label="기본 글씨 크기로 되돌리기"
-              title="기본 글씨 크기로 되돌리기"
+              aria-label={t("기본 글씨 크기로 되돌리기")}
+              title={t("기본 글씨 크기로 되돌리기")}
               onClick={() => changeFontScale(100)}
             >{fontScale}%</button>
             <button
               type="button"
-              aria-label="글씨 크게"
-              title="글씨 크게"
+              aria-label={t("글씨 크게")}
+              title={t("글씨 크게")}
               disabled={fontScale >= FONT_SCALE_MAX}
               onClick={() => changeFontScale(fontScale + FONT_SCALE_STEP)}
             >A+</button>
@@ -1324,37 +1556,37 @@ export default function Home() {
           <input
             ref={fileInput}
             type="file"
-            aria-label="SERPENT 입력문 선택"
+            aria-label={t("SERPENT 입력문 선택")}
             hidden
             onChange={onPickInput}
           />
           <input
             ref={resultInput}
             type="file"
-            aria-label="Serpent 결과 파일 선택"
+            aria-label={t("Serpent 결과 파일 선택")}
             multiple
             hidden
             onChange={onPickResults}
           />
           <button
             className="button ghost"
-            title="Serpent 입력문을 엽니다. 같은 이름의 결과문이 이미 열려 있으면 연결합니다."
+            title={t("Serpent 입력문을 엽니다. 같은 이름의 결과문이 이미 열려 있으면 연결합니다.")}
             onClick={() => fileInput.current?.click()}
           >
-            <Icon>↥</Icon> 열기
+            <Icon>↥</Icon> {t("열기")}
           </button>
           <button
             className="button ghost"
-            title="결과문(_res.m)을 엽니다. 여러 개를 골라 탭으로 비교할 수 있습니다."
+            title={t("결과문(_res.m)을 엽니다. 여러 개를 골라 탭으로 비교할 수 있습니다.")}
             onClick={() => resultInput.current?.click()}
           >
-            <Icon>◫</Icon> 결과 열기
+            <Icon>◫</Icon> {t("결과 열기")}
           </button>
           <button className="button ghost" onClick={downloadInput}>
-            <Icon>↓</Icon> 내보내기
+            <Icon>↓</Icon> {t("내보내기")}
           </button>
           <button className="button primary" onClick={runValidation}>
-            <Icon>▶</Icon> 입력 검사
+            <Icon>▶</Icon> {t("입력 검사")}
           </button>
         </div>
       </header>
@@ -1362,7 +1594,7 @@ export default function Home() {
       {linkNotice && (
         <div className="link-notice" role="status">
           <span>{linkNotice}</span>
-          <button aria-label="안내 닫기" onClick={() => setLinkNotice("")}>×</button>
+          <button aria-label={t("안내 닫기")} onClick={() => setLinkNotice("")}>×</button>
         </div>
       )}
 
@@ -1377,14 +1609,14 @@ export default function Home() {
       >
         <aside className="sidebar">
           <div className="sidebar-heading">
-            <span>모델 구성</span>
-            <button className="icon-button" aria-label="카드 추가" onClick={() => setShowAdd(!showAdd)}>＋</button>
+            <span>{t("모델 구성")}</span>
+            <button className="icon-button" aria-label={t("카드 추가")} onClick={() => setShowAdd(!showAdd)}>＋</button>
           </div>
           {showAdd && (
             <div className="add-menu">
               {Object.keys(CARD_TEMPLATES).map((key) => (
                 <button key={key} onClick={() => addCard(key)}>
-                  <Icon>＋</Icon>{formatKind(key as CardKind)}
+                  <Icon>＋</Icon>{t(formatKind(key as CardKind))}
                 </button>
               ))}
             </div>
@@ -1392,29 +1624,29 @@ export default function Home() {
           <div className="sidebar-search">
             <span className="search-icon" aria-hidden="true">⌕</span>
             <input
-              aria-label="카드 검색"
-              placeholder="이름 · 값으로 카드 찾기"
+              aria-label={t("카드 검색")}
+              placeholder={t("이름 · 값으로 카드 찾기")}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
             {query && (
-              <button className="search-clear" aria-label="검색어 지우기" onClick={() => setQuery("")}>×</button>
+              <button className="search-clear" aria-label={t("검색어 지우기")} onClick={() => setQuery("")}>×</button>
             )}
           </div>
-          <nav className="model-tree" aria-label="Serpent 카드">
+          <nav className="model-tree" aria-label={t("Serpent 카드")}>
             {groupedCards.map((group) => {
               const collapsed = !query && collapsedGroups.includes(group.name);
               return (
                 <div className="tree-group" key={group.name}>
                   <button
                     className={collapsed ? "tree-label collapsed" : "tree-label"}
-                    title={group.hint}
+                    title={t(group.hint)}
                     aria-expanded={!collapsed}
                     onClick={() => toggleGroup(group.name)}
                   >
                     <span className="chevron" aria-hidden="true">▼</span>
                     <span className="group-icon" aria-hidden="true">{group.icon}</span>
-                    <span>{group.name}</span>
+                    <span>{t(group.name)}</span>
                     <span className="group-count">{group.items.length}</span>
                   </button>
                   {!collapsed && (
@@ -1439,17 +1671,19 @@ export default function Home() {
               );
             })}
             {!matchCount && (
-              <p className="tree-empty">{query ? `'${query}'와 일치하는 카드가 없습니다.` : "카드가 없습니다."}</p>
+              <p className="tree-empty">{query ? t("'{q}'와 일치하는 카드가 없습니다.").replace("{q}", query) : t("카드가 없습니다.")}</p>
             )}
           </nav>
           <div className="project-health">
             <div className="health-row">
-              <span>모델 상태</span>
-              <strong className={errors ? "bad" : "good"}>{errors ? `${errors} 오류` : "정상"}</strong>
+              <span>{t("모델 상태")}</span>
+              <strong className={errors ? "bad" : "good"}>{errors ? t("{n} 오류").replace("{n}", String(errors)) : t("정상")}</strong>
             </div>
             <div className="health-meter"><span style={{ width: errors ? "64%" : "100%" }} /></div>
             <small>
-              {query ? `${matchCount} / ${cards.length}개 카드 표시 중` : `${cards.length}개 카드 · Serpent 2 형식`}
+              {query
+                ? t("{shown} / {total}개 카드 표시 중").replace("{shown}", String(matchCount)).replace("{total}", String(cards.length))
+                : t("{total}개 카드 · Serpent 2 형식").replace("{total}", String(cards.length))}
             </small>
           </div>
         </aside>
@@ -1457,45 +1691,51 @@ export default function Home() {
         <section className="editor-pane">
           <div className="editor-tabs">
             <button className={view === "builder" ? "active" : ""} onClick={() => setView("builder")}>
-              구조화 편집
+              {t("구조화 편집")}
             </button>
             <button className={view === "source" ? "active" : ""} onClick={() => setView("source")}>
-              원문 입력
+              {t("원문 입력")}
             </button>
             <button className={view === "results" ? "active" : ""} onClick={() => setView("results")}>
-              결과 분석
+              {t("결과 분석")}
               {results.length > 0 && <span className="tab-count">{results.length}</span>}
+            </button>
+            <button
+              className={view === "summary" ? "active" : ""}
+              onClick={() => { setView("summary"); captureGeometryImage(); }}
+            >
+              {t("계산 정리")}
             </button>
             <div className="undo-group">
               {/* 화면이 760px 이하로 좁아지면 형상 미리보기 패널 전체가 숨는다(공간이 없어서).
                   이 버튼은 그 폭에서만 CSS로 나타나 전체화면 오버레이로 다시 열어 준다. */}
               <button
                 className="icon-button mobile-geometry-toggle"
-                title="형상 미리보기 열기"
-                aria-label="형상 미리보기 열기"
+                title={t("형상 미리보기 열기")}
+                aria-label={t("형상 미리보기 열기")}
                 onClick={() => setMobileGeometryOpen(true)}
               >◫</button>
               <button
                 className="icon-button"
-                title={sourcePast.length ? `되돌리기 (Ctrl+Z) · ${sourcePast.length}개` : "되돌릴 편집이 없습니다"}
-                aria-label="편집 되돌리기"
+                title={sourcePast.length ? t("되돌리기 (Ctrl+Z) · {n}개").replace("{n}", String(sourcePast.length)) : t("되돌릴 편집이 없습니다")}
+                aria-label={t("편집 되돌리기")}
                 disabled={!sourcePast.length}
                 onClick={undoSource}
               >⟲</button>
               <button
                 className="icon-button"
-                title={sourceFuture.length ? `다시 실행 (Ctrl+Shift+Z) · ${sourceFuture.length}개` : "다시 실행할 편집이 없습니다"}
-                aria-label="편집 다시 실행"
+                title={sourceFuture.length ? t("다시 실행 (Ctrl+Shift+Z) · {n}개").replace("{n}", String(sourceFuture.length)) : t("다시 실행할 편집이 없습니다")}
+                aria-label={t("편집 다시 실행")}
                 disabled={!sourceFuture.length}
                 onClick={redoSource}
               >⟳</button>
               <button
                 className="icon-button"
-                title="샘플로 되돌리기"
+                title={t("샘플로 되돌리기")}
                 onClick={() => {
                   if (
                     !sourceIsUntouched() &&
-                    !window.confirm("지금 편집 중인 내용을 버리고 샘플 입력으로 되돌릴까요?")
+                    !window.confirm(t("지금 편집 중인 내용을 버리고 샘플 입력으로 되돌릴까요?"))
                   ) {
                     return;
                   }
@@ -1503,12 +1743,32 @@ export default function Home() {
                   setSource(SAMPLE_INPUT);
                   resetSourceHistory();
                   setGeometrySource(SAMPLE_INPUT);
+                  // 더 이상 그 파일의 내용이 아니므로 폴더·수정 시각을 들고 있으면 거짓말이 된다.
+                  setInputFileInfo(undefined);
                 }}
               >↶</button>
             </div>
           </div>
 
-          {view === "results" ? (
+          {view === "summary" ? (
+            <SummaryPanel
+              meta={summaryMeta}
+              onChange={updateSummaryMeta}
+              onToggleImages={setSummaryIncludeImages}
+              onChangeLocale={setSummaryLocale}
+              markdown={summaryMarkdown}
+              markdownSize={summaryByteSize}
+              onDownload={downloadSummary}
+              downloading={downloadingSummary}
+              fileName={summaryFileName(fileName, undefined, summaryMeta.locale)}
+              imagePlan={summaryResult.images}
+              inputFile={inputFileInfo}
+              resultCount={results.length}
+              geometryImage={geometryImage}
+              onRecaptureImage={captureGeometryImage}
+              t={t}
+            />
+          ) : view === "results" ? (
             <ResultsPanel
               cases={results}
               referenceId={referenceId}
@@ -1520,6 +1780,8 @@ export default function Home() {
               linkedInput={inputFor}
               onOpenLinkedInput={(file) => { loadInput(file); setView("builder"); }}
               detectorsFor={detectorsFor}
+              t={t}
+              uiLocale={uiLocale}
             />
           ) : view === "source" ? (
             <div className="source-editor">
@@ -1528,7 +1790,7 @@ export default function Home() {
                 <span>{source.split("\n").length} lines</span>
               </div>
               <textarea
-                aria-label="Serpent 원문 입력"
+                aria-label={t("Serpent 원문 입력")}
                 spellCheck={false}
                 value={source}
                 onChange={(event) => updateSource(event.target.value, { coalesce: true })}
@@ -1538,25 +1800,25 @@ export default function Home() {
             <div className="form-editor">
               <div className="card-header">
                 <div>
-                  <span className="eyebrow">{cardCategory(selected)} · {formatKind(selected.kind)}</span>
+                  <span className="eyebrow">{t(cardCategory(selected))} · {t(formatKind(selected.kind))}</span>
                   <h1>{selected.label}</h1>
-                  <p>입력 카드의 값을 수정하면 Serpent 원문에 바로 반영됩니다.</p>
+                  <p>{t("입력 카드의 값을 수정하면 Serpent 원문에 바로 반영됩니다.")}</p>
                 </div>
                 <span className="line-badge">LINE {selected.startLine}</span>
               </div>
 
               {selectedGuide && (
-                <section className="card-guide" aria-label="Serpent 매뉴얼 안내">
+                <section className="card-guide" aria-label={t("Serpent 매뉴얼 안내")}>
                   <div className="guide-copy">
-                    <span>공식 매뉴얼 기반 안내</span>
+                    <span>{t("공식 매뉴얼 기반 안내")}</span>
                     <strong>{selectedGuide.title}</strong>
                     <p>{selectedGuide.description}</p>
                   </div>
                   <code>{selectedGuide.syntax}</code>
                   <div className="current-values">
                     <div className="current-values-head">
-                      <span>현재 입력값 해석</span>
-                      <small>입력값을 수정하면 설명도 즉시 갱신됩니다.</small>
+                      <span>{t("현재 입력값 해석")}</span>
+                      <small>{t("입력값을 수정하면 설명도 즉시 갱신됩니다.")}</small>
                     </div>
                     <div className="meaning-grid">
                       {selectedMeanings.map((item, index) => (
@@ -1572,12 +1834,12 @@ export default function Home() {
                     {selectedGuide.tips.map((tip) => <li key={tip}>{tip}</li>)}
                   </ul>
                   <a href={selectedGuide.url} target="_blank" rel="noreferrer">
-                    공식 문법 보기 ↗
+                    {t("공식 문법 보기 ↗")}
                   </a>
                 </section>
               )}
 
-              <h2 className="form-section-title">입력값 편집</h2>
+              <h2 className="form-section-title">{t("입력값 편집")}</h2>
               <div className="form-grid">
                 {Object.entries(selectedData).map(([key, value]) => {
                   const wide = ["values", "region", "composition", "comment"].includes(key);
@@ -1592,7 +1854,7 @@ export default function Home() {
                             spellCheck={false}
                             onChange={(event) => handleField(key, event.target.value)}
                           />
-                          <div className="composition-hints" aria-label="핵종 조성 해석">
+                          <div className="composition-hints" aria-label={t("핵종 조성 해석")}>
                             {value.split("\n").some((line) => line.trim()) ? (
                               value.split("\n").map((line, index) => {
                                 const trimmed = line.trim();
@@ -1608,14 +1870,14 @@ export default function Home() {
                                     <span>
                                       {info
                                         ? describeNuclide(info)
-                                        : "라이브러리 접미사(예: .09c)가 없어 해석할 수 없습니다."}
+                                        : t("라이브러리 접미사(예: .09c)가 없어 해석할 수 없습니다.")}
                                     </span>
                                   </div>
                                 );
                               })
                             ) : (
                               <p className="composition-hint-empty">
-                                핵종을 입력하면 원소·질량수·라이브러리를 해석해 표시합니다. 예: 92235.09c → 우라늄-235, 라이브러리 09c
+                                {t("핵종을 입력하면 원소·질량수·라이브러리를 해석해 표시합니다. 예: 92235.09c → 우라늄-235, 라이브러리 09c")}
                               </p>
                             )}
                           </div>
@@ -1631,14 +1893,14 @@ export default function Home() {
 
               <div className="raw-card">
                 <div>
-                  <span>생성된 입력 카드</span>
-                  <small>원문 입력 탭에서도 직접 수정할 수 있습니다.</small>
+                  <span>{t("생성된 입력 카드")}</span>
+                  <small>{t("원문 입력 탭에서도 직접 수정할 수 있습니다.")}</small>
                 </div>
                 <code>{selected.lines.filter((line) => line.trim()).join("\n")}</code>
               </div>
             </div>
           ) : (
-            <div className="empty-state">편집할 카드를 선택하세요.</div>
+            <div className="empty-state">{t("편집할 카드를 선택하세요.")}</div>
           )}
         </section>
 
@@ -1646,7 +1908,7 @@ export default function Home() {
           className={resizingGeometry ? "pane-resizer active" : "pane-resizer"}
           role="separator"
           aria-orientation="vertical"
-          aria-label="형상 미리보기 폭 조절"
+          aria-label={t("형상 미리보기 폭 조절")}
           aria-valuenow={geometryWidth}
           aria-valuemin={GEOMETRY_WIDTH_MIN}
           aria-valuemax={GEOMETRY_WIDTH_MAX}
@@ -1663,17 +1925,17 @@ export default function Home() {
 
         <aside
           className={mobileGeometryOpen ? "geometry-pane mobile-open" : "geometry-pane"}
-          aria-label="형상 미리보기"
+          aria-label={t("형상 미리보기")}
         >
           <div className="geometry-pane-heading">
-            <span>형상 미리보기</span>
+            <span>{t("형상 미리보기")}</span>
             <div className="geometry-heading-actions">
               {mobileGeometryOpen && (
                 <button
                   type="button"
                   className="icon-button"
-                  aria-label="형상 미리보기 닫기"
-                  title="닫기"
+                  aria-label={t("형상 미리보기 닫기")}
+                  title={t("닫기")}
                   onClick={() => setMobileGeometryOpen(false)}
                 >×</button>
               )}
@@ -1684,11 +1946,11 @@ export default function Home() {
                 disabled={!geometryStale}
                 title={
                   geometryStale
-                    ? "입력이 바뀌었습니다. 눌러서 형상을 다시 그립니다."
-                    : "형상이 최신 상태입니다."
+                    ? t("입력이 바뀌었습니다. 눌러서 형상을 다시 그립니다.")
+                    : t("형상이 최신 상태입니다.")
                 }
               >
-                <Icon>↻</Icon> {geometryStale ? "새로고침 필요" : "새로고침"}
+                <Icon>↻</Icon> {geometryStale ? t("새로고침 필요") : t("새로고침")}
               </button>
               <button
                 type="button"
@@ -1697,13 +1959,15 @@ export default function Home() {
                 aria-haspopup="dialog"
               >
                 <span className={issuesTone === "ok" ? "status-dot" : `status-dot ${issuesTone}`} />
-                검사 결과 <strong>{issuesLabel}</strong>
+                {t("검사 결과")} <strong>{issuesLabel}</strong>
               </button>
             </div>
           </div>
           <GeometryPreview
+            ref={geometryPreviewRef}
             model={geometryModel}
             selectedSurfaceId={selected?.kind === "surface" ? selectedData.name : ""}
+            t={t}
           />
         </aside>
       </section>
@@ -1714,25 +1978,25 @@ export default function Home() {
             className="issues-modal"
             role="dialog"
             aria-modal="true"
-            aria-label="검사 결과"
+            aria-label={t("검사 결과")}
             onClick={(event) => event.stopPropagation()}
           >
             <div className="issues-modal-head">
-              <span>검사 결과</span>
-              <button aria-label="닫기" onClick={() => setShowIssues(false)}>×</button>
+              <span>{t("검사 결과")}</span>
+              <button aria-label={t("닫기")} onClick={() => setShowIssues(false)}>×</button>
             </div>
             <div className="issues">
               <div className="issue-summary">
                 <div className={errors ? "summary-icon error" : "summary-icon"}>{errors ? "!" : "✓"}</div>
                 <div>
-                  <strong>{errors ? "입력을 확인해 주세요" : "치명적인 오류가 발견되지 않았습니다"}</strong>
+                  <strong>{errors ? t("입력을 확인해 주세요") : t("치명적인 오류가 발견되지 않았습니다")}</strong>
                   <span>{errors} errors · {issues.length - errors} warnings</span>
                 </div>
               </div>
               <p className="issues-stale-note">
                 {geometryStale
-                  ? "형상 관련 오류(겹침·빈틈)는 새로고침 이후 기준입니다. 방금 편집한 내용은 아직 반영되지 않았을 수 있습니다."
-                  : "형상 겹침·빈틈 검사는 격자 표본점만 확인합니다. 아주 얇은 틈이나 국소적인 겹침은 표본 사이로 빠져나가 놓칠 수 있습니다."}
+                  ? t("형상 관련 오류(겹침·빈틈)는 새로고침 이후 기준입니다. 방금 편집한 내용은 아직 반영되지 않았을 수 있습니다.")
+                  : t("형상 겹침·빈틈 검사는 격자 표본점만 확인합니다. 아주 얇은 틈이나 국소적인 겹침은 표본 사이로 빠져나가 놓칠 수 있습니다.")}
               </p>
               {issues.length ? issues.map((issue, index) => (
                 <button
@@ -1745,10 +2009,10 @@ export default function Home() {
                   }}
                 >
                   <span>{issue.level === "error" ? "×" : "!"}</span>
-                  <div><strong>{issue.level === "error" ? "오류" : "권장 사항"}</strong><p>{issue.message}</p></div>
+                  <div><strong>{issue.level === "error" ? t("오류") : t("권장 사항")}</strong><p>{issue.message}</p></div>
                 </button>
               )) : (
-                <div className="all-clear">표본 검사에서 문제가 발견되지 않았습니다.</div>
+                <div className="all-clear">{t("표본 검사에서 문제가 발견되지 않았습니다.")}</div>
               )}
             </div>
           </div>
@@ -1756,22 +2020,22 @@ export default function Home() {
       )}
 
       <footer className="statusbar">
-        <div><span className={errors ? "status-light error" : "status-light"} /> {errors ? "검사 필요" : "기본 검증 통과"}</div>
+        <div><span className={errors ? "status-light error" : "status-light"} /> {errors ? t("검사 필요") : t("기본 검증 통과")}</div>
         <div className="status-center"><span>Surfaces {cards.filter((c) => c.kind === "surface").length}</span><span>Cells {cards.filter((c) => c.kind === "cell").length}</span><span>Materials {cards.filter((c) => c.kind === "material").length}</span></div>
-        <button onClick={() => setLogOpen(!logOpen)}>⌃ 실행 콘솔</button>
+        <button onClick={() => setLogOpen(!logOpen)}>⌃ {t("실행 콘솔")}</button>
       </footer>
 
       {logOpen && (
         <div className="console">
-          <div className="console-head"><span>입력 검사 콘솔</span><button onClick={() => setLogOpen(false)}>×</button></div>
+          <div className="console-head"><span>{t("입력 검사 콘솔")}</span><button onClick={() => setLogOpen(false)}>×</button></div>
           <pre>
 {`SERPENT Studio validator
 Reading ${fileName}...
 Parsed ${cards.length} input cards.
 ${errors ? `Found ${errors} error(s) and ${issues.length - errors} warning(s).` : `No blocking errors found. ${issues.length} recommendation(s).`}
 
-브라우저 버전에서는 문법과 참조 무결성을 검사합니다.
-정식 계산 전에는 설치된 Serpent에서 입력 검사를 다시 수행하세요.`}
+${t("브라우저 버전에서는 문법과 참조 무결성을 검사합니다.")}
+${t("정식 계산 전에는 설치된 Serpent에서 입력 검사를 다시 수행하세요.")}`}
           </pre>
         </div>
       )}
@@ -1807,13 +2071,16 @@ function formatCoordinate(value: number, step: number) {
   return value.toFixed(decimals);
 }
 
-function GeometryPreview({
-  model,
-  selectedSurfaceId,
-}: {
+/** 형상 미리보기 캔버스를 밖에서(계산 정리 탭) 찍을 수 있도록 여는 손잡이. */
+type GeometryPreviewHandle = {
+  captureImage: () => SummaryGeometryImage | null;
+};
+
+const GeometryPreview = forwardRef<GeometryPreviewHandle, {
   model: GeometryModel;
   selectedSurfaceId: string;
-}) {
+  t: (ko: string) => string;
+}>(function GeometryPreview({ model, selectedSurfaceId, t }, ref) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const transform = useRef<PreviewTransform | null>(null);
@@ -1833,6 +2100,21 @@ function GeometryPreview({
   const [highlight, setHighlight] = useState("");
   const [showProblems, setShowProblems] = useState(true);
   const [size, setSize] = useState({ width: 0, height: 0 });
+
+  // 캔버스를 직접 읽는 쪽이 필요할 때만 부르는 명령형 손잡이라 useMemo/useState 로
+  // 감쌀 이유가 없다 — 매 렌더마다 캔버스를 인코딩하지 않는다는 게 핵심이다.
+  useImperativeHandle(ref, () => ({
+    captureImage: () => {
+      const element = canvas.current;
+      if (!element || !element.width || !element.height) return null;
+      return {
+        dataUrl: element.toDataURL("image/png"),
+        width: element.width,
+        height: element.height,
+        basis: basis.toUpperCase(),
+      };
+    },
+  }), [basis]);
 
   const modelBounds = useMemo(() => geometryPlotBounds(model, basis), [model, basis]);
   // outside 셀이 없으면 바깥 공간 전체가 빈틈으로 잡히므로 빈틈 표시는 끈다.
@@ -2275,7 +2557,11 @@ function GeometryPreview({
           context.ellipse(center.x, center.y, radius * scale, radius * scale, 0, 0, Math.PI * 2);
           context.stroke();
         }
-        drawDimension(center, edge, `${activeSurface.id} · ${activeSurface.type === "sqc" ? "반폭" : "R"} ${radius.toFixed(3)} cm`);
+        drawDimension(
+          center,
+          edge,
+          `${activeSurface.id} · ${activeSurface.type === "sqc" ? t("반폭") : "R"} ${radius.toFixed(3)} cm`,
+        );
       } else if (basis === "xy" && activeSurface.type === "pad") {
         const angular = padAngleRange(v);
         const angle = (((angular.start + angular.end) / 2) * Math.PI) / 180;
@@ -2296,7 +2582,7 @@ function GeometryPreview({
         context.beginPath();
         context.ellipse(center.x, center.y, sectionRadius * scale, sectionRadius * scale, 0, 0, Math.PI * 2);
         context.stroke();
-        drawDimension(center, edge, `${activeSurface.id} · 단면 R ${sectionRadius.toFixed(3)} cm`);
+        drawDimension(center, edge, `${activeSurface.id} · ${t("단면")} R ${sectionRadius.toFixed(3)} cm`);
       } else {
         const isVerticalPlane =
           (basis === "xy" && activeSurface.type === "px") ||
@@ -2356,7 +2642,7 @@ function GeometryPreview({
       const axialRange = v.length >= 5 ? ` · z ${(v[3] ?? 0).toFixed(2)}…${(v[4] ?? 0).toFixed(2)}` : "";
       return {
         position: `(${(v[0] ?? 0).toFixed(2)}, ${(v[1] ?? 0).toFixed(2)})`,
-        dimension: `R ${(v[2] ?? 0).toFixed(3)} · 중심거리 ${centerDistance.toFixed(3)}${axialRange}`,
+        dimension: `R ${(v[2] ?? 0).toFixed(3)} · ${t("중심거리")} ${centerDistance.toFixed(3)}${axialRange}`,
       };
     }
     if (surface.type === "pad") {
@@ -2366,7 +2652,7 @@ function GeometryPreview({
       };
     }
     if (surface.type === "pz") {
-      return { position: `z = ${(v[0] ?? 0).toFixed(3)}`, dimension: `원점거리 ${Math.abs(v[0] ?? 0).toFixed(3)}` };
+      return { position: `z = ${(v[0] ?? 0).toFixed(3)}`, dimension: `${t("원점거리")} ${Math.abs(v[0] ?? 0).toFixed(3)}` };
     }
     if (surface.type === "sph") {
       return {
@@ -2378,10 +2664,10 @@ function GeometryPreview({
       const cornerRadius = v[3];
       return {
         position: `(${(v[0] ?? 0).toFixed(2)}, ${(v[1] ?? 0).toFixed(2)})`,
-        dimension: `반폭 ${(v[2] ?? 0).toFixed(3)}${Number.isFinite(cornerRadius) ? ` · 모서리 R ${cornerRadius.toFixed(3)}` : ""}`,
+        dimension: `${t("반폭")} ${(v[2] ?? 0).toFixed(3)}${Number.isFinite(cornerRadius) ? ` · ${t("모서리 R")} ${cornerRadius.toFixed(3)}` : ""}`,
       };
     }
-    return { position: `${surface.type} = ${(v[0] ?? 0).toFixed(3)}`, dimension: `원점거리 ${Math.abs(v[0] ?? 0).toFixed(3)}` };
+    return { position: `${surface.type} = ${(v[0] ?? 0).toFixed(3)}`, dimension: `${t("원점거리")} ${Math.abs(v[0] ?? 0).toFixed(3)}` };
   }
 
   const hoverColor = hover ? materialColor(model, hover.material) : null;
@@ -2389,7 +2675,7 @@ function GeometryPreview({
   return (
     <div className="preview-panel">
       <div className="preview-toolbar">
-        <span className="toolbar-label">단면</span>
+        <span className="toolbar-label">{t("단면")}</span>
         <div className="segmented">
           {(["xy", "xz", "yz"] as PlotBasis[]).map((item) => (
             <button className={basis === item ? "active" : ""} key={item} onClick={() => changeBasis(item)}>
@@ -2405,14 +2691,14 @@ function GeometryPreview({
             max={sliceRange.max}
             step={sliceRange.step}
             value={slice}
-            aria-label={`${axisNames[2]} 단면 위치`}
+            aria-label={`${axisNames[2]} ${t("단면 위치")}`}
             onChange={(event) => setSlice(Number(event.target.value))}
           />
           <input
             type="number"
             step={0.1}
             value={Number(slice.toFixed(4))}
-            aria-label={`${axisNames[2]} 단면 좌표`}
+            aria-label={`${axisNames[2]} ${t("단면 좌표")}`}
             onChange={(event) => setSlice(Number(event.target.value))}
           />
           <span>cm</span>
@@ -2421,65 +2707,67 @@ function GeometryPreview({
           type="button"
           className={showProblems ? "problem-toggle active" : "problem-toggle"}
           aria-pressed={showProblems}
-          title="셀이 겹치거나 어떤 셀에도 속하지 않는 영역을 표시합니다."
+          title={t("셀이 겹치거나 어떤 셀에도 속하지 않는 영역을 표시합니다.")}
           onClick={() => setShowProblems(!showProblems)}
         >
           <span className="problem-swatch" aria-hidden="true" />
-          문제 영역
+          {t("문제 영역")}
         </button>
         <div className="zoom-control">
-          <button onClick={() => changeZoom(1 / 1.4)} aria-label="축소" title="축소">−</button>
+          <button onClick={() => changeZoom(1 / 1.4)} aria-label={t("축소")} title={t("축소")}>−</button>
           <span className="zoom-value">{(zoom * 100).toFixed(0)}%</span>
-          <button onClick={() => changeZoom(1.4)} aria-label="확대" title="확대">＋</button>
-          <button onClick={resetView} title="전체 보기로 되돌리기">전체</button>
+          <button onClick={() => changeZoom(1.4)} aria-label={t("확대")} title={t("확대")}>＋</button>
+          <button onClick={resetView} title={t("전체 보기로 되돌리기")}>{t("전체")}</button>
         </div>
       </div>
 
       <div className={panning ? "canvas-wrap panning" : "canvas-wrap"} ref={wrap}>
         <canvas
           ref={canvas}
-          aria-label={`Serpent 입력문에서 생성한 ${basis.toUpperCase()} 재료 평면도`}
+          aria-label={`${t("Serpent 입력문에서 생성한 {basis} 재료 평면도").replace("{basis}", basis.toUpperCase())}`}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={endPan}
           onPointerCancel={endPan}
           onPointerLeave={(event) => { endPan(event); setHover(null); }}
         />
-        <div className="canvas-hint">휠 확대 · 드래그 이동</div>
+        <div className="canvas-hint">{t("휠 확대 · 드래그 이동")}</div>
       </div>
 
       <div className="canvas-readout">
         <span className="readout-axes">
-          가로 {axisNames[0]} · 세로 {axisNames[1]} · 단면 {axisNames[2]} = {Number(slice.toFixed(3))} cm
+          {t("가로 {h} · 세로 {v} · 단면 {a} = {z} cm")
+            .replace("{h}", axisNames[0]).replace("{v}", axisNames[1])
+            .replace("{a}", axisNames[2]).replace("{z}", String(Number(slice.toFixed(3))))}
         </span>
         {hover ? (
           <>
             <span>{axisNames[0]} <b>{hover.horizontal.toFixed(3)}</b></span>
             <span>{axisNames[1]} <b>{hover.vertical.toFixed(3)}</b></span>
             {hover.overlap.length > 1 && (
-              <span className="readout-problem">겹침: {hover.overlap.join(" · ")}</span>
+              <span className="readout-problem">{t("겹침")}: {hover.overlap.join(" · ")}</span>
             )}
             {hover.status === "undefined" && outsideDefined && (
-              <span className="readout-problem">빈틈 — 어떤 셀에도 속하지 않음</span>
+              <span className="readout-problem">{t("빈틈 — 어떤 셀에도 속하지 않음")}</span>
             )}
             <span className="readout-material">
               <i style={{ background: hoverColor ? `rgb(${hoverColor.join(",")})` : "transparent" }} />
               {hover.material
-                || (hover.status === "outside" ? "outside (계산 영역 바깥)"
-                  : hover.status === "unsupported" ? "미지원 구조(lat 등)"
-                  : "정의되지 않은 공간")}
+                || (hover.status === "outside" ? t("outside (계산 영역 바깥)")
+                  : hover.status === "unsupported" ? t("미지원 구조(lat 등)")
+                  : t("정의되지 않은 공간"))}
             </span>
           </>
         ) : (
-          <span className="readout-idle">도면 위에 커서를 올리면 좌표와 물질이 표시됩니다.</span>
+          <span className="readout-idle">{t("도면 위에 커서를 올리면 좌표와 물질이 표시됩니다.")}</span>
         )}
       </div>
 
       <div className="preview-details">
         <div className="legend-block">
           <div className="legend-title">
-            <strong>물질 색상</strong>
-            <small>클릭하면 해당 물질만 강조합니다.</small>
+            <strong>{t("물질 색상")}</strong>
+            <small>{t("클릭하면 해당 물질만 강조합니다.")}</small>
           </div>
           <div className="material-strip">
             {usedMaterials.map((name) => {
@@ -2495,29 +2783,29 @@ function GeometryPreview({
                 </button>
               );
             })}
-            {!usedMaterials.length && <span className="no-preview">정의된 물질이 없습니다.</span>}
+            {!usedMaterials.length && <span className="no-preview">{t("정의된 물질이 없습니다.")}</span>}
           </div>
           {showProblems && (
             <p className="problem-legend">
               <span className="problem-swatch hatched" aria-hidden="true" />
-              빗금은 <strong>셀 겹침</strong> — Serpent는 오류 없이 먼저 정의된 셀만 사용합니다.
+              {t("빗금은")} <strong>{t("셀 겹침")}</strong> — {t("Serpent는 오류 없이 먼저 정의된 셀만 사용합니다.")}
               <span className="problem-swatch solid" aria-hidden="true" />
-              단색은 <strong>빈틈</strong> — 실행 중 지오메트리 오류가 납니다.
-              {!outsideDefined && " (outside 셀이 없어 빈틈 표시는 꺼져 있습니다.)"}
+              {t("단색은")} <strong>{t("빈틈")}</strong> — {t("실행 중 지오메트리 오류가 납니다.")}
+              {!outsideDefined && ` (${t("outside 셀이 없어 빈틈 표시는 꺼져 있습니다.")})`}
             </p>
           )}
         </div>
 
         <div className="legend-block">
           <div className="legend-title">
-            <strong>{basis.toUpperCase()} 단면 경계 {visibleSurfaces.length}개</strong>
-            <small>행을 선택하면 도면에 치수가 표시됩니다.</small>
+            <strong>{t("{basis} 단면 경계 {n}개").replace("{basis}", basis.toUpperCase()).replace("{n}", String(visibleSurfaces.length))}</strong>
+            <small>{t("행을 선택하면 도면에 치수가 표시됩니다.")}</small>
           </div>
           {visibleSurfaces.length ? (
             <table className="dimension-table">
               <thead>
                 <tr>
-                  <th>경계</th><th>형식</th><th>기준 위치</th><th>치수 / 거리</th>
+                  <th>{t("경계")}</th><th>{t("형식")}</th><th>{t("기준 위치")}</th><th>{t("치수 / 거리")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -2539,18 +2827,19 @@ function GeometryPreview({
               </tbody>
             </table>
           ) : (
-            <p className="no-preview">현재 단면과 교차하는 지원 표면이 없습니다.</p>
+            <p className="no-preview">{t("현재 단면과 교차하는 지원 표면이 없습니다.")}</p>
           )}
         </div>
 
         <p className="preview-note">
-          이 평면도는 결과 이미지가 아니라 입력문의 표면·셀 Boolean 조건과 물질 색을 픽셀별로 계산해 생성합니다.
-          직교 격자(lat type 1)와 유니버스 평행이동(trans)을 반영하며, 그 밖의 격자 형식과 회전 변환은 아직 지원하지 않습니다.
+          {t("이 평면도는 결과 이미지가 아니라 입력문의 표면·셀 Boolean 조건과 물질 색을 픽셀별로 계산해 생성합니다.")}
+          {" "}
+          {t("직교 격자(lat type 1)와 유니버스 평행이동(trans)을 반영하며, 그 밖의 격자 형식과 회전 변환은 아직 지원하지 않습니다.")}
         </p>
       </div>
     </div>
   );
-}
+});
 
 const SPECTRUM_WIDTH = 720;
 const SPECTRUM_HEIGHT = 320;
@@ -2643,7 +2932,7 @@ function formatFlux(value: number) {
   return `${mantissa.toFixed(2)} × 10${exp < 0 ? "⁻" : ""}${superscript}`;
 }
 
-function SpectrumChart({ bins }: { bins: ResultCase["spectrum"] }) {
+function SpectrumChart({ bins, t }: { bins: ResultCase["spectrum"]; t: (ko: string) => string }) {
   const geometry = useMemo(() => buildSpectrumGeometry(bins), [bins]);
   const [hover, setHover] = useState<number | null>(null);
   const [showTable, setShowTable] = useState(false);
@@ -2731,16 +3020,16 @@ function SpectrumChart({ bins }: { bins: ResultCase["spectrum"] }) {
           <>
             <strong>{formatFlux(active.bin.perLethargy)}</strong>
             <span>
-              그룹 {active.index + 1} · {(active.bin.low * EV_PER_MEV).toExponential(2)} – {(active.bin.high * EV_PER_MEV).toExponential(2)} eV
+              {t("그룹")} {active.index + 1} · {(active.bin.low * EV_PER_MEV).toExponential(2)} – {(active.bin.high * EV_PER_MEV).toExponential(2)} eV
             </span>
           </>
         ) : (
-          <span className="spectrum-hint">그래프 위에 마우스를 올리면 해당 에너지군의 값을 보여줍니다.</span>
+          <span className="spectrum-hint">{t("그래프 위에 마우스를 올리면 해당 에너지군의 값을 보여줍니다.")}</span>
         )}
       </div>
 
       <button className="link-button" onClick={() => setShowTable(!showTable)} aria-expanded={showTable}>
-        {showTable ? "표 닫기" : "표로 보기"} ({steps.length}개 군)
+        {showTable ? t("표 닫기") : t("표로 보기")} ({t("{n}개 군").replace("{n}", String(steps.length))})
       </button>
 
       {showTable && (
@@ -2748,10 +3037,10 @@ function SpectrumChart({ bins }: { bins: ResultCase["spectrum"] }) {
           <table className="worth-table spectrum-table">
             <thead>
               <tr>
-                <th>군</th>
-                <th>하한 (eV)</th>
-                <th>상한 (eV)</th>
-                <th>렙서지당 중성자속</th>
+                <th>{t("군")}</th>
+                <th>{t("하한 (eV)")}</th>
+                <th>{t("상한 (eV)")}</th>
+                <th>{t("렙서지당 중성자속")}</th>
               </tr>
             </thead>
             <tbody>
@@ -2771,6 +3060,196 @@ function SpectrumChart({ bins }: { bins: ResultCase["spectrum"] }) {
   );
 }
 
+/**
+ * 계산 정리 화면.
+ *
+ * 왼쪽은 브라우저가 알 수 없는 값(작성자, 실제 저장 경로 등)을 받는 짧은 폼이고,
+ * 오른쪽은 실제로 내려받게 될 마크다운을 그대로 보여 준다. 미리보기와 파일이
+ * 같은 문자열이라 "받아보니 다르더라" 하는 일이 없다.
+ */
+function SummaryPanel({
+  meta,
+  onChange,
+  onToggleImages,
+  onChangeLocale,
+  markdown,
+  markdownSize,
+  onDownload,
+  downloading,
+  fileName,
+  imagePlan,
+  inputFile,
+  resultCount,
+  geometryImage,
+  onRecaptureImage,
+  t,
+}: {
+  meta: SummaryMeta;
+  onChange: (field: keyof SummaryMeta, value: string) => void;
+  onToggleImages: (value: boolean) => void;
+  onChangeLocale: (locale: SummaryMeta["locale"]) => void;
+  markdown: string;
+  markdownSize: number;
+  onDownload: () => void;
+  downloading: boolean;
+  fileName: string;
+  imagePlan: SummaryImagePlan;
+  inputFile: IngestedFile | undefined;
+  resultCount: number;
+  geometryImage: SummaryGeometryImage | undefined;
+  onRecaptureImage: () => void;
+  t: (ko: string) => string;
+}) {
+  const lines = markdown.split("\n").length;
+  const companionFiles = [
+    ...(imagePlan.geometry ? [imagePlan.geometry] : []),
+    ...imagePlan.spectra.map((spec) => spec.fileName),
+  ];
+
+  return (
+    <div className="summary-panel">
+      <div className="summary-form">
+        <div className="summary-intro">
+          <div className="summary-intro-row">
+            <h1>{t("계산 정리")}</h1>
+            {/* 이 토글은 웹페이지가 아니라 내려받는 문서 자체의 언어를 고른다 — 앱 UI 언어와는
+                다른 별개의 선택이라 상단의 앱 전체 토글과 서로 영향을 주지 않는다. */}
+            <div className="locale-toggle" role="group" aria-label="Document language">
+              <button
+                type="button"
+                className={meta.locale === "ko" ? "active" : ""}
+                onClick={() => onChangeLocale("ko")}
+              >한국어</button>
+              <button
+                type="button"
+                className={meta.locale === "en" ? "active" : ""}
+                onClick={() => onChangeLocale("en")}
+              >English</button>
+            </div>
+          </div>
+          <p>
+            {t("나중에 같은 계산을 다시 돌릴 수 있도록 입력문 전문·파일 정보·결과를 하나의 마크다운으로 모읍니다.")}
+          </p>
+        </div>
+
+        <label className="summary-field">
+          <span>{t("제목")}</span>
+          <input
+            value={meta.title}
+            placeholder={t("비우면 입력문 이름을 씁니다")}
+            onChange={(event) => onChange("title", event.target.value)}
+          />
+        </label>
+
+        <label className="summary-field">
+          <span>{t("작성자")}</span>
+          <input
+            value={meta.analyst}
+            placeholder={t("이름")}
+            onChange={(event) => onChange("analyst", event.target.value)}
+          />
+        </label>
+
+        <label className="summary-field wide">
+          <span>{t("파일 위치")}</span>
+          <textarea
+            rows={2}
+            value={meta.location}
+            placeholder="/home/user/calc/v2c22/"
+            onChange={(event) => onChange("location", event.target.value)}
+          />
+          <small>
+            {t("브라우저는 보안상 실제 경로를 알려주지 않습니다. 재현하려면 계산을 돌린 디렉터리를 직접 적어야 합니다.")}
+          </small>
+        </label>
+
+        <label className="summary-field wide">
+          <span>{t("비고")}</span>
+          <textarea
+            rows={3}
+            value={meta.notes}
+            placeholder={t("이번 계산에서 바꾼 것, 확인할 것 등")}
+            onChange={(event) => onChange("notes", event.target.value)}
+          />
+        </label>
+
+        <div className="summary-field wide summary-images">
+          <label className="summary-checkbox">
+            <input
+              type="checkbox"
+              checked={meta.includeImages}
+              onChange={(event) => onToggleImages(event.target.checked)}
+            />
+            <span>{t("형상·스펙트럼을 별도 PNG 파일로 함께 받기 (해상도 그대로)")}</span>
+          </label>
+
+          {meta.includeImages && (
+            <div className="summary-thumb">
+              {geometryImage ? (
+                // 캔버스를 그 자리에서 찍은 data: URI 라 next/image 최적화 대상이 아니다.
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={geometryImage.dataUrl}
+                  alt={t("형상 미리보기 스냅샷")}
+                  width={geometryImage.width}
+                  height={geometryImage.height}
+                />
+              ) : (
+                <div className="summary-thumb-empty">{t("형상 이미지 없음")}</div>
+              )}
+              <div className="summary-thumb-info">
+                {geometryImage
+                  ? <span>{geometryImage.basis} {t("단면")} · {geometryImage.width}×{geometryImage.height}px</span>
+                  : <span>{t("탭을 열면 자동으로 찍습니다")}</span>}
+                <button type="button" className="icon-button" onClick={onRecaptureImage} title={t("형상 미리보기를 다시 찍습니다")}>
+                  <Icon>↻</Icon> {t("다시 캡처")}
+                </button>
+              </div>
+              <small>
+                {t("형상 미리보기를 새로고침하거나 단면·확대를 바꾼 뒤에는 여기서 다시 찍어야 최신 그림이 들어갑니다. 다운로드 버튼을 누르면 이 그림과 스펙트럼 그림이 마크다운과 함께 별도 PNG 파일로 내려받아집니다 — 같은 폴더에 두어야 마크다운 뷰어에서 그림이 보입니다.")}
+              </small>
+              {companionFiles.length > 0 && (
+                <ul className="summary-companion-list">
+                  {companionFiles.map((name) => <li key={name}><code>{name}</code></li>)}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 주 동작이므로 폼을 스크롤하지 않아도 늘 보이게 폼 밖에 둔다. */}
+      <div className="summary-actions">
+        <div className="summary-status">
+          <div className={inputFile ? "summary-chip ok" : "summary-chip warn"}>
+            {inputFile
+              ? t("입력문 파일 정보 있음{extra}").replace("{extra}", inputFile.lastModified ? t(" · 수정 시각 포함") : t(" · 수정 시각 없음"))
+              : t("입력문을 파일로 열지 않아 폴더·수정 시각 없음")}
+          </div>
+          <div className={resultCount ? "summary-chip ok" : "summary-chip warn"}>
+            {resultCount ? t("결과문 {n}건").replace("{n}", String(resultCount)) : t("결과문 없음 — 결과 절이 빕니다")}
+          </div>
+          <div className="summary-size">
+            {lines.toLocaleString("en-US")}{t("줄")} · {markdownSize.toLocaleString("en-US")} bytes
+            {companionFiles.length > 0 && ` · ${t("PNG {n}개 별도").replace("{n}", String(companionFiles.length))}`}
+          </div>
+        </div>
+        <button className="button primary summary-download" onClick={onDownload} disabled={downloading}>
+          <Icon>↓</Icon> {downloading ? t("내려받는 중…") : fileName}
+        </button>
+      </div>
+
+      <div className="summary-preview">
+        <div className="source-toolbar">
+          <span>{t("미리보기 (내려받는 파일과 동일 — 그림은 별도 PNG 파일로 받습니다)")}</span>
+          <span>Markdown</span>
+        </div>
+        <pre>{markdown}</pre>
+      </div>
+    </div>
+  );
+}
+
 function ResultsPanel({
   cases,
   referenceId,
@@ -2782,6 +3261,8 @@ function ResultsPanel({
   linkedInput,
   onOpenLinkedInput,
   detectorsFor,
+  t,
+  uiLocale,
 }: {
   cases: ResultCase[];
   referenceId: string;
@@ -2793,6 +3274,8 @@ function ResultsPanel({
   linkedInput: (item: ResultCase) => IngestedFile | undefined;
   onOpenLinkedInput: (file: IngestedFile) => void;
   detectorsFor: (item: ResultCase) => Detector[];
+  t: (ko: string) => string;
+  uiLocale: UiLocale;
 }) {
   const valid = useMemo(() => cases.filter((item) => !item.error), [cases]);
   const active = valid.find((item) => item.id === activeId) ?? valid[0];
@@ -2806,25 +3289,22 @@ function ResultsPanel({
       <div className="results-pane empty">
         <div className="results-empty">
           <span className="results-empty-mark">◫</span>
-          <h2>Serpent 결과 파일을 불러오세요</h2>
+          <h2>{t("Serpent 결과 파일을 불러오세요")}</h2>
           <p>
-            계산이 끝나면 생기는 <code>*_res.m</code> 파일을 열면 keff·반응도·지발중성자분율 같은
-            주요 결과가 자동으로 정리됩니다.
+            {t("계산이 끝나면 생기는")} <code>*_res.m</code> {t("파일을 열면 keff·반응도·지발중성자분율 같은 주요 결과가 자동으로 정리됩니다.")}
           </p>
           <ul className="results-empty-hint">
             <li>
-              <strong>여러 개를 한 번에</strong> 골라도 됩니다. 각각 탭으로 열리고,
-              기준 케이스 대비 반응도가(Δρ)를 표로 비교합니다.
+              <strong>{t("여러 개를 한 번에")}</strong> {t("골라도 됩니다. 각각 탭으로 열리고, 기준 케이스 대비 반응도가(Δρ)를 표로 비교합니다.")}
             </li>
             <li>
-              <strong>입력문</strong>은 상단 <code>열기</code> 로 따로 불러옵니다.
-              이름이 같으면 (<code>X</code> ↔ <code>X_res.m</code>) 자동으로 연결됩니다.
+              <strong>{t("입력문")}</strong>{t("은 상단")} <code>{t("열기")}</code> {t("로 따로 불러옵니다. 이름이 같으면 (")}<code>X</code> ↔ <code>X_res.m</code>{t(") 자동으로 연결됩니다.")}
             </li>
-            <li>Finder 에서 파일이나 폴더를 이 창에 <strong>끌어다 놓아도</strong> 됩니다.</li>
+            <li>{t("Finder 에서 파일이나 폴더를 이 창에")} <strong>{t("끌어다 놓아도")}</strong> {t("됩니다.")}</li>
           </ul>
           <div className="results-empty-actions">
             <button className="button primary" onClick={onOpen}>
-              <Icon>◫</Icon> 결과 파일 열기
+              <Icon>◫</Icon> {t("결과 파일 열기")}
             </button>
           </div>
         </div>
@@ -2835,7 +3315,7 @@ function ResultsPanel({
   return (
     <div className="results-pane">
       <div className="results-bar">
-        <div className="results-tabs" role="tablist" aria-label="불러온 결과 파일">
+        <div className="results-tabs" role="tablist" aria-label={t("불러온 결과 파일")}>
           {cases.map((item) => (
             // 닫기 버튼을 탭 버튼 "안"에 role="button" span 으로 넣으면 유효하지 않은 HTML이고
             // (button 안의 button), 브라우저 대부분에서 Tab 키로 닫기에 도달할 수 없다.
@@ -2860,37 +3340,39 @@ function ResultsPanel({
               <button
                 type="button"
                 className="result-tab-close"
-                aria-label={`${item.label} 닫기`}
-                title="닫기"
+                aria-label={t("{name} 닫기").replace("{name}", item.label)}
+                title={t("닫기")}
                 onClick={() => onRemove(item.id)}
               >×</button>
             </div>
           ))}
         </div>
-        <button className="button ghost" onClick={onOpen}><Icon>＋</Icon> 추가</button>
+        <button className="button ghost" onClick={onOpen}><Icon>＋</Icon> {t("추가")}</button>
       </div>
 
       {active?.error || !active ? (
-        <p className="results-error">{cases.find((item) => item.error)?.error ?? "결과를 읽을 수 없습니다."}</p>
+        <p className="results-error">{tError(cases.find((item) => item.error)?.error ?? "결과를 읽을 수 없습니다.", uiLocale)}</p>
       ) : (
         <div className="results-body">
           <header className="results-head">
             <div>
-              <span className="eyebrow">{active.version || "Serpent"} · {active.completeDate || "완료 시각 미상"}</span>
+              <span className="eyebrow">{active.version || "Serpent"} · {active.completeDate || t("완료 시각 미상")}</span>
               <h1>{active.inputName || active.fileName}</h1>
               <p>
-                {active.pop?.toLocaleString()}개 입자 × {active.activeCycles ?? "?"}회 활성 사이클
-                {active.cycles !== undefined && ` (전체 ${active.cycles}회 중 ${active.skip}회 버림)`}
-                {active.runningTime !== undefined && ` · ${(active.runningTime / 60).toFixed(1)}분 소요`}
+                {t("{pop}개 입자 × {gen}회 활성 사이클")
+                  .replace("{pop}", active.pop?.toLocaleString() ?? "?")
+                  .replace("{gen}", String(active.activeCycles ?? "?"))}
+                {active.cycles !== undefined && ` (${t("전체 {total}회 중 {skip}회 버림)").replace("{total}", String(active.cycles)).replace("{skip}", String(active.skip))}`}
+                {active.runningTime !== undefined && ` · ${t("{min}분 소요").replace("{min}", (active.runningTime / 60).toFixed(1))}`}
               </p>
             </div>
             <div className="results-head-side">
               <span className={`health-badge ${active.worstStatus}`}>
-                {active.worstStatus === "ok" ? "검증 통과" : active.worstStatus === "warn" ? "확인 필요" : "결과 사용 주의"}
+                {active.worstStatus === "ok" ? t("검증 통과") : active.worstStatus === "warn" ? t("확인 필요") : t("결과 사용 주의")}
               </span>
               {(() => {
                 const paired = linkedInput(active);
-                if (!paired) return <span className="link-missing">연결된 입력문 없음</span>;
+                if (!paired) return <span className="link-missing">{t("연결된 입력문 없음")}</span>;
                 return (
                   <button className="linked-input" onClick={() => onOpenLinkedInput(paired)}>
                     <Icon>▤</Icon> {paired.name}
@@ -2900,31 +3382,31 @@ function ResultsPanel({
             </div>
           </header>
 
-          <section className="metric-row" aria-label="핵심 결과">
+          <section className="metric-row" aria-label={t("핵심 결과")}>
             <div className="metric primary">
-              <span>실효증배계수 k<sub>eff</sub></span>
+              <span>{t("실효증배계수")} k<sub>eff</sub></span>
               <strong>{active.keff ? formatNumber(active.keff.value, 5) : "—"}</strong>
               <small>
                 ± {active.keff ? (active.keff.abs * 1e5).toFixed(1) : "—"} pcm · {active.keffEstimator}
               </small>
             </div>
             <div className="metric">
-              <span>반응도 ρ</span>
+              <span>{t("반응도")} ρ</span>
               <strong>{active.rho ? active.rho.value.toFixed(1) : "—"}<em>pcm</em></strong>
               <small>± {active.rho ? active.rho.abs.toFixed(1) : "—"} pcm</small>
             </div>
             <div className="metric">
-              <span>반응도 (달러)</span>
+              <span>{t("반응도 (달러)")}</span>
               <strong>{active.dollars !== undefined ? active.dollars.toFixed(3) : "—"}<em>$</em></strong>
               <small>ρ / β<sub>eff</sub></small>
             </div>
             <div className="metric">
-              <span>지발중성자분율 β<sub>eff</sub></span>
+              <span>{t("지발중성자분율")} β<sub>eff</sub></span>
               <strong>{active.betaEff !== undefined ? (active.betaEff * 1e5).toFixed(0) : "—"}<em>pcm</em></strong>
               <small>{active.betaEff !== undefined ? formatNumber(active.betaEff, 6) : "—"}</small>
             </div>
             <div className="metric">
-              <span>중성자 세대시간 Λ</span>
+              <span>{t("중성자 세대시간")} Λ</span>
               <strong>{active.genTime !== undefined ? (active.genTime * 1e6).toFixed(2) : "—"}<em>μs</em></strong>
               <small>{active.genTimeEstimator || "—"}</small>
             </div>
@@ -2932,19 +3414,19 @@ function ResultsPanel({
 
           {active.delayedGroups.length > 0 && (
             <section className="results-section">
-              <h2>지발중성자 {active.delayedGroups.length}군 상수</h2>
+              <h2>{t("지발중성자 {n}군 상수").replace("{n}", String(active.delayedGroups.length))}</h2>
               <p className="section-note">
-                β<sub>eff,i</sub> 비율은 각 군의 값을 전체 β<sub>eff</sub>로 나눈 값입니다.
-                λ<sub>i</sub>는 전구체 붕괴상수이며 단위는 s<sup>−1</sup>입니다.
+                {t("β")}<sub>eff,i</sub> {t("비율은 각 군의 값을 전체")} β<sub>eff</sub>{t("로 나눈 값입니다.")}
+                {" "}λ<sub>i</sub>{t("는 전구체 붕괴상수이며 단위는")} s<sup>−1</sup>{t("입니다.")}
                 <span className="result-source"> {active.delayedSource}</span>
               </p>
               <div className="table-scroll">
                 <table className="worth-table delayed-table">
                   <thead>
                     <tr>
-                      <th>전구체군</th>
+                      <th>{t("전구체군")}</th>
                       <th>β<sub>eff,i</sub> (pcm)</th>
-                      <th>β<sub>eff</sub> 비율</th>
+                      <th>β<sub>eff</sub> {t("비율")}</th>
                       <th>λ<sub>i</sub> (s<sup>−1</sup>)</th>
                     </tr>
                   </thead>
@@ -2964,7 +3446,7 @@ function ResultsPanel({
                       </tr>
                     ))}
                     <tr className="total-row">
-                      <td>전체 / 가중값</td>
+                      <td>{t("전체 / 가중값")}</td>
                       <td className="num">{active.betaEff !== undefined ? (active.betaEff * 1e5).toFixed(3) : "—"}</td>
                       <td className="num">100.00 %</td>
                       <td className="num">
@@ -2975,44 +3457,47 @@ function ResultsPanel({
                   </tbody>
                 </table>
               </div>
-              <p className="result-error-note">± 값은 res.m의 상대 표준편차를 절대 표준편차로 환산한 1σ입니다.</p>
+              <p className="result-error-note">{t("± 값은 res.m의 상대 표준편차를 절대 표준편차로 환산한 1σ입니다.")}</p>
             </section>
           )}
 
           <section className="results-section">
-            <h2>계산 건전성</h2>
+            <h2>{t("계산 건전성")}</h2>
             <p className="section-note">
-              값을 쓰기 전에 확인하는 항목입니다. 하나라도 실패하면 keff 자체를 신뢰할 수 없습니다.
+              {t("값을 쓰기 전에 확인하는 항목입니다. 하나라도 실패하면 keff 자체를 신뢰할 수 없습니다.")}
             </p>
             <div className="check-grid">
-              {active.checks.map((check) => (
-                <div className={`check-item ${check.status}`} key={check.label}>
-                  <span className={`status-dot ${check.status}`} />
-                  <div>
-                    <strong>{check.label}</strong>
-                    <small>{check.detail}</small>
+              {active.checks.map((check) => {
+                const translated = tCheck(check, uiLocale);
+                return (
+                  <div className={`check-item ${check.status}`} key={check.label}>
+                    <span className={`status-dot ${check.status}`} />
+                    <div>
+                      <strong>{translated.label}</strong>
+                      <small>{translated.detail}</small>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </section>
 
           {valid.length > 1 && (
             <section className="results-section">
-              <h2>기준 대비 반응도가 (Δρ)</h2>
+              <h2>{t("기준 대비 반응도가 (Δρ)")}</h2>
               <p className="section-note">
-                제어드럼·제어봉 배치 연구의 최종 산출물입니다. 두 계산이 독립이므로 오차는 √(σ₁²+σ₂²)로 전파됩니다.
-                기준보다 반응도가 낮으면 음수(삽입 효과)입니다. Δρ($)는 케이스마다 다른 β<sub>eff</sub>가 아니라
-                <strong> 기준 케이스의 β<sub>eff</sub></strong>
+                {t("제어드럼·제어봉 배치 연구의 최종 산출물입니다. 두 계산이 독립이므로 오차는 √(σ₁²+σ₂²)로 전파됩니다.")}
+                {" "}{t("기준보다 반응도가 낮으면 음수(삽입 효과)입니다. Δρ($)는 케이스마다 다른")} β<sub>eff</sub>{t("가 아니라")}
+                <strong> {t("기준 케이스의")} β<sub>eff</sub></strong>
                 {(() => {
                   const referenceCase = worth.find((row) => row.isReference)?.case;
                   return referenceCase?.betaEff !== undefined
                     ? ` (${(referenceCase.betaEff * 1e5).toFixed(0)} pcm)`
                     : "";
-                })()} 하나로 통일해 나눈 값입니다.
+                })()} {t("하나로 통일해 나눈 값입니다.")}
               </p>
               <label className="reference-picker">
-                <span>기준 케이스</span>
+                <span>{t("기준 케이스")}</span>
                 <select value={referenceId} onChange={(event) => onPickReference(event.target.value)}>
                   {valid.map((item) => (
                     <option key={item.id} value={item.id}>{item.label}</option>
@@ -3023,7 +3508,7 @@ function ResultsPanel({
                 <table className="worth-table">
                   <thead>
                     <tr>
-                      <th>케이스</th>
+                      <th>{t("케이스")}</th>
                       <th>k<sub>eff</sub></th>
                       <th>ρ (pcm)</th>
                       <th>Δρ (pcm)</th>
@@ -3036,7 +3521,7 @@ function ResultsPanel({
                         <td>
                           <span className={`status-dot ${row.case.worstStatus}`} />
                           {row.case.label}
-                          {row.isReference && <span className="ref-tag">기준</span>}
+                          {row.isReference && <span className="ref-tag">{t("기준")}</span>}
                         </td>
                         <td className="num">
                           {row.case.keff ? formatNumber(row.case.keff.value, 5) : "—"}
@@ -3065,13 +3550,13 @@ function ResultsPanel({
           )}
 
           <section className="results-section">
-            <h2>노심 물리 특성</h2>
+            <h2>{t("노심 물리 특성")}</h2>
             <div className="physics-grid">
               {active.physics.map((row) => (
                 <div className="physics-item" key={row.label}>
-                  <span>{row.label}</span>
+                  <span>{tPhysicsLabel(row.label, uiLocale)}</span>
                   <strong>{row.value}</strong>
-                  <small>{row.hint}</small>
+                  <small>{tPhysicsHint(row.hint, uiLocale)}</small>
                 </div>
               ))}
             </div>
@@ -3083,7 +3568,7 @@ function ResultsPanel({
             // (`[input]_det[idx].m`)에 저장되는 값이라 성격이 다르다 — 원하는 영역만
             // 골라 뽑을 수 있는 대신, 파일을 따로 열어야 보인다.
             const sources = [
-              ...(active.spectrum.length ? [{ id: "gc", label: "INF_MICRO_FLX (군상수)" }] : []),
+              ...(active.spectrum.length ? [{ id: "gc", label: t("INF_MICRO_FLX (군상수)") }] : []),
               ...detectors.map((det) => ({ id: det.name, label: `det: ${det.name}` })),
             ];
             if (!sources.length) return null;
@@ -3096,10 +3581,10 @@ function ResultsPanel({
 
             return (
               <section className="results-section">
-                <h2>중성자속 스펙트럼</h2>
+                <h2>{t("중성자속 스펙트럼")}</h2>
                 {sources.length > 1 ? (
                   <label className="reference-picker">
-                    <span>출처</span>
+                    <span>{t("출처")}</span>
                     <select value={effective} onChange={(event) => setSpectrumSource(event.target.value)}>
                       {sources.map((source) => (
                         <option key={source.id} value={source.id}>{source.label}</option>
@@ -3111,29 +3596,24 @@ function ResultsPanel({
                   {effective === "gc" ? (
                     <>
                       {active.entries.get("GC_UNIVERSE_NAME")?.text
-                        ? `균질화 유니버스 '${active.entries.get("GC_UNIVERSE_NAME")?.text}'의 `
+                        ? t("균질화 유니버스 '{name}'의 ").replace("{name}", active.entries.get("GC_UNIVERSE_NAME")?.text ?? "")
                         : ""}
-                      무한매질 스펙트럼(INF_MICRO_FLX)을 단위 렙서지당 값으로 환산한 결과입니다.
-                      군상수 생성이 켜져 있을 때 자동으로 만들어지는 값이라, 그 유니버스가
-                      전체 모델을 덮지 않으면 모델 전체가 아니라 그 영역만의 스펙트럼입니다.
+                      {t("무한매질 스펙트럼(INF_MICRO_FLX)을 단위 렙서지당 값으로 환산한 결과입니다. 군상수 생성이 켜져 있을 때 자동으로 만들어지는 값이라, 그 유니버스가 전체 모델을 덮지 않으면 모델 전체가 아니라 그 영역만의 스펙트럼입니다.")}
                     </>
                   ) : (
                     <>
-                      검출기 <code>{effective}</code>의 에너지 구간별 값을 단위 렙서지당으로 환산한
-                      결과입니다. det 파일 파싱은 VTT 공식 문서의 열 배치만 보고 작성했고 실제
-                      Serpent 출력으로 검증하지는 못했습니다 — 정확한 값인지는 원본 det 파일과
-                      대조해 보세요.
+                      {t("검출기")} <code>{effective}</code>{t("의 에너지 구간별 값을 단위 렙서지당으로 환산한 결과입니다. det 파일 파싱은 VTT 공식 문서의 열 배치만 보고 작성했고 실제 Serpent 출력으로 검증하지는 못했습니다 — 정확한 값인지는 원본 det 파일과 대조해 보세요.")}
                     </>
                   )}
                 </p>
-                <SpectrumChart bins={bins} />
+                <SpectrumChart bins={bins} t={t} />
               </section>
             );
           })()}
 
           <p className="preview-note">
-            res.m 에서 값 뒤의 두 번째 숫자는 절대오차가 아니라 <strong>상대 표준편차</strong>입니다.
-            이 화면의 ± 표기는 이미 값과 곱해 절대오차로 환산한 것입니다.
+            {t("res.m 에서 값 뒤의 두 번째 숫자는 절대오차가 아니라")} <strong>{t("상대 표준편차")}</strong>{t("입니다.")}
+            {" "}{t("이 화면의 ± 표기는 이미 값과 곱해 절대오차로 환산한 것입니다.")}
           </p>
         </div>
       )}
