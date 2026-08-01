@@ -129,27 +129,29 @@ function Icon({ children }: { children: string }) {
   return <span className="icon" aria-hidden="true">{children}</span>;
 }
 
-function fieldLabel(card: SerpentCard, key: string) {
+function fieldLabel(card: SerpentCard, key: string, locale: UiLocale) {
+  const L = (ko: string, en: string) => (locale === "en" ? en : ko);
   const labels: Record<string, string> = {
     name:
-      card.kind === "surface" ? "표면 이름" :
-      card.kind === "cell" ? "셀 이름" :
-      card.kind === "material" ? "물질 이름" : "옵션",
-    type: "표면 형식",
-    values: card.kind === "surface" ? "파라미터" : "값",
+      card.kind === "surface" ? L("표면 이름", "Surface name") :
+      card.kind === "cell" ? L("셀 이름", "Cell name") :
+      card.kind === "material" ? L("물질 이름", "Material name") : L("옵션", "Option"),
+    type: L("표면 형식", "Surface type"),
+    values: card.kind === "surface" ? L("파라미터", "Parameters") : L("값", "Value"),
     universe: "Universe",
-    material: "물질 / Fill",
-    region: "영역 표현식",
-    density: "밀도",
-    options: "물질 옵션",
-    composition: "핵종 조성",
-    comment: "설명",
+    material: L("물질 / Fill", "Material / Fill"),
+    region: L("영역 표현식", "Region expression"),
+    density: L("밀도", "Density"),
+    options: L("물질 옵션", "Material options"),
+    composition: L("핵종 조성", "Nuclide composition"),
+    comment: L("설명", "Comment"),
   };
   return labels[key] ?? key;
 }
 
 /** 사이드바 항목에 표시할 이름과 한 줄 요약. */
-function cardSummary(card: SerpentCard) {
+function cardSummary(card: SerpentCard, locale: UiLocale) {
+  const L = (ko: string, en: string) => (locale === "en" ? en : ko);
   const data = getCardData(card);
   if (card.kind === "surface") {
     return { name: data.name || card.keyword, meta: `${data.type} ${data.values}`.trim() };
@@ -164,10 +166,10 @@ function cardSummary(card: SerpentCard) {
       ? density < 0 ? `${Math.abs(density)} g/cm³` : `${density} 1/(b·cm)`
       : data.density;
     const nuclides = (data.composition ?? "").split("\n").filter((line) => line.trim()).length;
-    return { name: data.name || card.keyword, meta: `${unit} · 핵종 ${nuclides}` };
+    return { name: data.name || card.keyword, meta: `${unit} · ${L(`핵종 ${nuclides}`, `${nuclides} nuclides`)}` };
   }
   if (card.kind === "title") {
-    return { name: data.values || "제목 없음", meta: "set title" };
+    return { name: data.values || L("제목 없음", "Untitled"), meta: "set title" };
   }
   if (card.kind === "setting") {
     return { name: `set ${data.name}`, meta: data.values || "—" };
@@ -200,233 +202,421 @@ type CardGuide = {
 
 const SYNTAX_MANUAL = "https://serpent.vtt.fi/docs/syntax/index.html";
 
-function surfaceParameterHint(type: string) {
+function surfaceParameterHint(type: string, locale: UiLocale) {
+  const L = (ko: string, en: string) => (locale === "en" ? en : ko);
   return {
-    px: "x₀ — x축에 수직인 평면의 위치",
-    py: "y₀ — y축에 수직인 평면의 위치",
-    pz: "z₀ — z축에 수직인 평면의 위치",
-    cyl: "x₀  y₀  r — z축과 평행한 원통의 중심과 반지름",
-    cylz: "x₀  y₀  r — z축과 평행한 원통의 중심과 반지름",
-    sph: "x₀  y₀  z₀  r — 구의 중심과 반지름",
-    sqc: "x₀  y₀  r [r₀] — 정사각 기둥의 중심, 반폭, 선택적 모서리 반경",
-    pad: "x₀  y₀  r₁  r₂  α₁  α₂ — 원환 부채꼴의 중심, 내·외반경, 시작·끝 각도(°)",
-    cuboid: "x₁  x₂  y₁  y₂  z₁  z₂ — 직육면체의 각 축 최소·최대 좌표",
-    plane: "A  B  C  D — Ax + By + Cz = D 형태의 일반 평면",
-  }[type.toLowerCase()] ?? "선택한 표면 형식에 맞는 좌표와 치수를 cm 단위로 입력합니다.";
+    px: L("x₀ — x축에 수직인 평면의 위치", "x₀ — position of the plane perpendicular to the x-axis"),
+    py: L("y₀ — y축에 수직인 평면의 위치", "y₀ — position of the plane perpendicular to the y-axis"),
+    pz: L("z₀ — z축에 수직인 평면의 위치", "z₀ — position of the plane perpendicular to the z-axis"),
+    cyl: L("x₀  y₀  r — z축과 평행한 원통의 중심과 반지름", "x₀  y₀  r — center and radius of a cylinder parallel to the z-axis"),
+    cylz: L("x₀  y₀  r — z축과 평행한 원통의 중심과 반지름", "x₀  y₀  r — center and radius of a cylinder parallel to the z-axis"),
+    sph: L("x₀  y₀  z₀  r — 구의 중심과 반지름", "x₀  y₀  z₀  r — center and radius of a sphere"),
+    sqc: L(
+      "x₀  y₀  r [r₀] — 정사각 기둥의 중심, 반폭, 선택적 모서리 반경",
+      "x₀  y₀  r [r₀] — center and half-width of a square prism, with an optional corner radius",
+    ),
+    pad: L(
+      "x₀  y₀  r₁  r₂  α₁  α₂ — 원환 부채꼴의 중심, 내·외반경, 시작·끝 각도(°)",
+      "x₀  y₀  r₁  r₂  α₁  α₂ — center, inner/outer radius, and start/end angle (°) of an annular sector",
+    ),
+    cuboid: L(
+      "x₁  x₂  y₁  y₂  z₁  z₂ — 직육면체의 각 축 최소·최대 좌표",
+      "x₁  x₂  y₁  y₂  z₁  z₂ — min/max coordinates on each axis of a cuboid",
+    ),
+    plane: L("A  B  C  D — Ax + By + Cz = D 형태의 일반 평면", "A  B  C  D — a general plane of the form Ax + By + Cz = D"),
+  }[type.toLowerCase()] ?? L(
+    "선택한 표면 형식에 맞는 좌표와 치수를 cm 단위로 입력합니다.",
+    "Enter the coordinates and dimensions in cm that match the selected surface type.",
+  );
 }
 
-function guideForCard(card: SerpentCard, data: Record<string, string>): CardGuide {
+function guideForCard(card: SerpentCard, data: Record<string, string>, locale: UiLocale): CardGuide {
+  const L = (ko: string, en: string) => (locale === "en" ? en : ko);
   const keyword = card.keyword.toLowerCase();
   const option = data.name?.toLowerCase() ?? "";
 
   if (card.kind === "surface") {
     return {
-      title: "표면은 셀의 경계를 만듭니다",
-      description: "표면 자체에는 물질이 없으며, 셀 카드가 표면의 양·음 방향을 조합해 실제 공간을 정의합니다.",
+      title: L("표면은 셀의 경계를 만듭니다", "A surface defines the boundary of a cell"),
+      description: L(
+        "표면 자체에는 물질이 없으며, 셀 카드가 표면의 양·음 방향을 조합해 실제 공간을 정의합니다.",
+        "A surface has no material of its own — cell cards combine its positive and negative sides to define actual space.",
+      ),
       syntax: "surf NAME TYPE PARAM₁ PARAM₂ …",
-      tips: [surfaceParameterHint(data.type ?? ""), "표면 이름은 cell, det, 변환 카드에서 다시 참조할 수 있습니다."],
+      tips: [
+        surfaceParameterHint(data.type ?? "", locale),
+        L("표면 이름은 cell, det, 변환 카드에서 다시 참조할 수 있습니다.", "The surface name can be referenced again from cell, det, and transformation cards."),
+      ],
       url: "https://serpent.vtt.fi/docs/extra/csg_surfaces.html",
     };
   }
   if (card.kind === "cell") {
     return {
-      title: "셀은 공간에 물질 또는 다른 유니버스를 배치합니다",
-      description: "표면 번호의 부호와 Boolean 연산으로 닫힌 영역을 만들고, 그 영역을 물질·void·outside 또는 fill 유니버스로 채웁니다.",
+      title: L("셀은 공간에 물질 또는 다른 유니버스를 배치합니다", "A cell places a material or another universe in space"),
+      description: L(
+        "표면 번호의 부호와 Boolean 연산으로 닫힌 영역을 만들고, 그 영역을 물질·void·outside 또는 fill 유니버스로 채웁니다.",
+        "Surface signs and Boolean operations form a closed region, which is then filled with a material, void, outside, or a fill universe.",
+      ),
       syntax: "cell NAME UNI MAT  SURF₁ SURF₂ …",
-      tips: ["음수 표면은 음의 면(일반적으로 내부), 양수 표면은 양의 면을 선택합니다.", "공백은 교집합, 콜론(:)은 합집합, 괄호는 연산 그룹을 뜻합니다."],
+      tips: [
+        L("음수 표면은 음의 면(일반적으로 내부), 양수 표면은 양의 면을 선택합니다.", "A negative surface selects its negative side (usually the interior); a positive surface selects its positive side."),
+        L("공백은 교집합, 콜론(:)은 합집합, 괄호는 연산 그룹을 뜻합니다.", "A space means intersection, a colon (:) means union, and parentheses group operations."),
+      ],
       url: `${SYNTAX_MANUAL}#cell`,
     };
   }
   if (card.kind === "material") {
     return {
-      title: "물질은 밀도와 핵종 조성을 정의합니다",
-      description: "수송 중 입자의 국소 상호작용 확률은 물질의 밀도, 온도 및 핵종 조성으로 결정됩니다.",
+      title: L("물질은 밀도와 핵종 조성을 정의합니다", "A material defines density and nuclide composition"),
+      description: L(
+        "수송 중 입자의 국소 상호작용 확률은 물질의 밀도, 온도 및 핵종 조성으로 결정됩니다.",
+        "A particle's local interaction probability during transport is determined by the material's density, temperature, and nuclide composition.",
+      ),
       syntax: "mat NAME DENS [OPTION …]\nNUCLIDE FRACTION …",
       tips: [
-        "음수 밀도는 g/cm³ 단위의 질량밀도, 양수는 원자밀도입니다.",
-        "핵종 조성에서 원자 단위와 질량 단위를 섞지 마세요.",
-        "핵종 이름은 ZAID.라이브러리 형식입니다. 예: 92235.09c → Z=92(우라늄) A=235 → U-235, '09c'는 라이브러리 ID 09 · 연속에너지 중성자 데이터를 뜻합니다.",
+        L("음수 밀도는 g/cm³ 단위의 질량밀도, 양수는 원자밀도입니다.", "A negative density is mass density in g/cm³; a positive value is atomic density."),
+        L("핵종 조성에서 원자 단위와 질량 단위를 섞지 마세요.", "Don't mix atomic and mass units within the nuclide composition."),
+        L(
+          "핵종 이름은 ZAID.라이브러리 형식입니다. 예: 92235.09c → Z=92(우라늄) A=235 → U-235, '09c'는 라이브러리 ID 09 · 연속에너지 중성자 데이터를 뜻합니다.",
+          "Nuclide names use the ZAID.library format. Example: 92235.09c → Z=92 (uranium) A=235 → U-235, where '09c' means library ID 09, continuous-energy neutron data.",
+        ),
       ],
       url: `${SYNTAX_MANUAL}#mat`,
     };
   }
   if (card.kind === "title") {
     return {
-      title: "계산 사례를 알아보기 쉬운 이름으로 지정합니다",
-      description: "제목은 실행 중 출력과 표준 결과 파일에 기록됩니다. 생략하면 입력 파일명이 대신 사용됩니다.",
+      title: L("계산 사례를 알아보기 쉬운 이름으로 지정합니다", "Give the calculation case a recognizable name"),
+      description: L(
+        "제목은 실행 중 출력과 표준 결과 파일에 기록됩니다. 생략하면 입력 파일명이 대신 사용됩니다.",
+        "The title is recorded in the run output and the standard result file. If omitted, the input file name is used instead.",
+      ),
       syntax: 'set title "NAME"',
-      tips: ["공백이나 특수문자가 포함된 제목은 따옴표로 감쌉니다."],
+      tips: [L("공백이나 특수문자가 포함된 제목은 따옴표로 감쌉니다.", "Wrap a title containing spaces or special characters in quotes.")],
       url: `${SYNTAX_MANUAL}#set-title`,
     };
   }
   if (card.kind === "setting" && option === "pop") {
     return {
-      title: "임계도 계산의 입자 수와 세대 수를 정합니다",
-      description: "세대당 중성자 수, 활성 세대, 비활성 세대를 지정하며 이 카드가 있으면 임계도 소스 계산 모드가 선택됩니다.",
+      title: L("임계도 계산의 입자 수와 세대 수를 정합니다", "Sets the particle and generation counts for a criticality calculation"),
+      description: L(
+        "세대당 중성자 수, 활성 세대, 비활성 세대를 지정하며 이 카드가 있으면 임계도 소스 계산 모드가 선택됩니다.",
+        "Specifies neutrons per generation, active generations, and inactive generations; having this card selects criticality source mode.",
+      ),
       syntax: "set pop NPG NGEN NSKIP [K₀ BTCH NCRIT]",
-      tips: ["NPG는 세대당 중성자 수, NGEN은 활성 세대, NSKIP은 초기 비활성 세대입니다.", "외부 소스 계산용 set nps와 동시에 사용할 수 없습니다."],
+      tips: [
+        L("NPG는 세대당 중성자 수, NGEN은 활성 세대, NSKIP은 초기 비활성 세대입니다.", "NPG is neutrons per generation, NGEN is active generations, and NSKIP is the initial inactive generations."),
+        L("외부 소스 계산용 set nps와 동시에 사용할 수 없습니다.", "Cannot be used together with set nps, which is for external-source calculations."),
+      ],
       url: `${SYNTAX_MANUAL}#set-pop`,
     };
   }
   if (card.kind === "setting" && option === "nps") {
     return {
-      title: "외부 소스 계산의 총 입자 이력 수를 정합니다",
-      description: "총 입자 이력과 선택적 배치 수를 지정하며, 이 카드가 있으면 외부 소스 모드가 선택됩니다.",
+      title: L("외부 소스 계산의 총 입자 이력 수를 정합니다", "Sets the total particle-history count for an external-source calculation"),
+      description: L(
+        "총 입자 이력과 선택적 배치 수를 지정하며, 이 카드가 있으면 외부 소스 모드가 선택됩니다.",
+        "Specifies the total particle histories and an optional batch count; having this card selects external-source mode.",
+      ),
       syntax: "set nps NP [BTCH TBI]",
-      tips: ["NP는 전체 입자 이력 수입니다.", "임계도 계산용 set pop과 동시에 사용할 수 없습니다."],
+      tips: [
+        L("NP는 전체 입자 이력 수입니다.", "NP is the total number of particle histories."),
+        L("임계도 계산용 set pop과 동시에 사용할 수 없습니다.", "Cannot be used together with set pop, which is for criticality calculations."),
+      ],
       url: `${SYNTAX_MANUAL}#set-nps`,
     };
   }
   if (card.kind === "setting" && option === "bc") {
     return {
-      title: "입자가 외부 경계를 통과할 때의 처리를 정합니다",
-      description: "모든 방향에 하나의 조건을 적용하거나 x·y·z 방향별 조건을 지정할 수 있습니다.",
-      syntax: "set bc MODE [ALB]  또는  set bc MODEₓ MODEᵧ MODE𝓏 [ALB]",
-      tips: ["1 = 흡수(black), 2 = 반사(reflective), 3 = 주기(periodic) 경계입니다.", "반사·주기 조건은 반복 가능한 외곽 표면에서 사용해야 합니다."],
+      title: L("입자가 외부 경계를 통과할 때의 처리를 정합니다", "Sets how particles are handled when they cross the outer boundary"),
+      description: L(
+        "모든 방향에 하나의 조건을 적용하거나 x·y·z 방향별 조건을 지정할 수 있습니다.",
+        "You can apply one condition to all directions, or set a separate condition for each of the x, y, and z directions.",
+      ),
+      syntax: L("set bc MODE [ALB]  또는  set bc MODEₓ MODEᵧ MODE𝓏 [ALB]", "set bc MODE [ALB]  or  set bc MODEₓ MODEᵧ MODE𝓏 [ALB]"),
+      tips: [
+        L("1 = 흡수(black), 2 = 반사(reflective), 3 = 주기(periodic) 경계입니다.", "1 = black (absorbing), 2 = reflective, 3 = periodic boundary."),
+        L("반사·주기 조건은 반복 가능한 외곽 표면에서 사용해야 합니다.", "Reflective and periodic conditions must be used on outer surfaces that are actually repeatable."),
+      ],
       url: `${SYNTAX_MANUAL}#set-bc`,
     };
   }
   if (card.kind === "setting" && LIBRARY_OPTIONS.has(option)) {
     return {
-      title: "Serpent가 사용할 핵데이터 라이브러리 경로를 지정합니다",
-      description: "단면적·붕괴·핵분열 수율 등 계산에 필요한 외부 데이터 파일을 연결하는 옵션입니다.",
+      title: L("Serpent가 사용할 핵데이터 라이브러리 경로를 지정합니다", "Specifies the nuclear data library path Serpent will use"),
+      description: L(
+        "단면적·붕괴·핵분열 수율 등 계산에 필요한 외부 데이터 파일을 연결하는 옵션입니다.",
+        "An option that links the external data files needed for the calculation — cross sections, decay, fission yields, and so on.",
+      ),
       syntax: `set ${option} "LIB₁" ["LIB₂" …]`,
-      tips: ["SERPENT_DATA 환경변수를 사용하지 않는 경우에는 절대 경로가 필요할 수 있습니다.", "배포된 웹 편집기는 파일 존재 여부까지 확인하지 않으므로 Serpent 실행 환경에서 다시 점검하세요."],
+      tips: [
+        L(
+          "SERPENT_DATA 환경변수를 사용하지 않는 경우에는 절대 경로가 필요할 수 있습니다.",
+          "An absolute path may be required if you're not using the SERPENT_DATA environment variable.",
+        ),
+        L(
+          "배포된 웹 편집기는 파일 존재 여부까지 확인하지 않으므로 Serpent 실행 환경에서 다시 점검하세요.",
+          "This web editor doesn't check whether the file actually exists, so verify it again in your Serpent run environment.",
+        ),
+      ],
       url: `${SYNTAX_MANUAL}#set-${option}`,
     };
   }
   if (card.kind === "setting" && ["power", "powdens", "srcrate"].includes(option)) {
     return {
-      title: "Monte Carlo 결과의 물리적 정규화 기준을 지정합니다",
-      description: "모의 입자 이력으로 얻은 반응률을 실제 출력, 출력밀도 또는 소스율 기준의 물리량으로 변환합니다.",
+      title: L("Monte Carlo 결과의 물리적 정규화 기준을 지정합니다", "Specifies the physical normalization basis for Monte Carlo results"),
+      description: L(
+        "모의 입자 이력으로 얻은 반응률을 실제 출력, 출력밀도 또는 소스율 기준의 물리량으로 변환합니다.",
+        "Converts reaction rates obtained from simulated particle histories into physical quantities normalized to actual power, power density, or source rate.",
+      ),
       syntax: `set ${option} VALUE [MAT]`,
-      tips: ["power는 W, powdens는 kW/g, srcrate는 particles/s 기준입니다.", "연소 계산에서는 구간별 정규화 조건이 결과에 직접 영향을 줍니다."],
+      tips: [
+        L("power는 W, powdens는 kW/g, srcrate는 particles/s 기준입니다.", "power is in W, powdens is in kW/g, and srcrate is in particles/s."),
+        L(
+          "연소 계산에서는 구간별 정규화 조건이 결과에 직접 영향을 줍니다.",
+          "In burnup calculations, the per-step normalization directly affects the results.",
+        ),
+      ],
       url: `${SYNTAX_MANUAL}#set-${option}`,
     };
   }
   if (card.kind === "source") {
     return {
-      title: "외부 소스의 입자·공간·에너지 분포를 정의합니다",
-      description: "점, 셀, 물질, 유니버스, 표면 또는 파일을 기준으로 시작 입자를 샘플링할 수 있습니다.",
+      title: L("외부 소스의 입자·공간·에너지 분포를 정의합니다", "Defines the particle, spatial, and energy distribution of an external source"),
+      description: L(
+        "점, 셀, 물질, 유니버스, 표면 또는 파일을 기준으로 시작 입자를 샘플링할 수 있습니다.",
+        "Starting particles can be sampled based on a point, cell, material, universe, surface, or file.",
+      ),
       syntax: "src NAME [PART] [sp X Y Z] [sc CELL] [sm MAT] [se E] …",
-      tips: ["sp는 점 위치, sc·sm·su는 셀·물질·유니버스 체적 소스입니다.", "체적 소스는 sx·sy·sz 또는 srad로 샘플링 범위를 좁히면 효율이 좋아집니다."],
+      tips: [
+        L("sp는 점 위치, sc·sm·su는 셀·물질·유니버스 체적 소스입니다.", "sp is a point location; sc, sm, and su are cell, material, and universe volume sources."),
+        L(
+          "체적 소스는 sx·sy·sz 또는 srad로 샘플링 범위를 좁히면 효율이 좋아집니다.",
+          "For a volume source, narrowing the sampling range with sx, sy, sz, or srad improves efficiency.",
+        ),
+      ],
       url: `${SYNTAX_MANUAL}#src`,
     };
   }
   if (card.kind === "detector") {
     return {
-      title: "플럭스·반응률·전류 등의 확률론적 추정량을 계산합니다",
-      description: "공간, 에너지, 시간 영역과 반응 응답을 조합해 필요한 결과를 별도로 집계합니다.",
+      title: L("플럭스·반응률·전류 등의 확률론적 추정량을 계산합니다", "Computes stochastic estimates such as flux, reaction rate, and current"),
+      description: L(
+        "공간, 에너지, 시간 영역과 반응 응답을 조합해 필요한 결과를 별도로 집계합니다.",
+        "Combines spatial, energy, and time bins with a reaction response to tally the desired result separately.",
+      ),
       syntax: "det NAME [PART] [dc CELL] [dm MAT] [de EGRID] [dr MT RMAT] …",
-      tips: ["dc·dm·du·dl은 집계할 공간 영역을 제한합니다.", "de는 에너지 격자, dr은 반응 응답을 연결합니다."],
+      tips: [
+        L("dc·dm·du·dl은 집계할 공간 영역을 제한합니다.", "dc, dm, du, and dl restrict the spatial region being tallied."),
+        L("de는 에너지 격자, dr은 반응 응답을 연결합니다.", "de links an energy grid, and dr links a reaction response."),
+      ],
       url: `${SYNTAX_MANUAL}#det`,
     };
   }
   if (card.kind === "plot") {
     return {
-      title: "Serpent 실행 시 생성할 형상 단면도를 설정합니다",
-      description: "plot은 단면 방향과 픽셀 크기를 지정하고, gplot은 파일명·강조·경계 등 더 세밀한 옵션을 제공합니다.",
+      title: L("Serpent 실행 시 생성할 형상 단면도를 설정합니다", "Configures the geometry cross-section plot Serpent generates at run time"),
+      description: L(
+        "plot은 단면 방향과 픽셀 크기를 지정하고, gplot은 파일명·강조·경계 등 더 세밀한 옵션을 제공합니다.",
+        "plot sets the cross-section direction and pixel size, while gplot offers finer options such as file name, highlighting, and boundaries.",
+      ),
       syntax: keyword === "plot" ? "plot TYPE NX NY [POS …]" : "gplot NAME plane TYPE … pix NX NY …",
-      tips: ["plot 방향은 1 = YZ, 2 = XZ, 3 = XY입니다.", "현재 우측 미리보기는 이 카드와 별개로 입력문의 CSG를 즉시 계산합니다."],
+      tips: [
+        L("plot 방향은 1 = YZ, 2 = XZ, 3 = XY입니다.", "plot direction is 1 = YZ, 2 = XZ, 3 = XY."),
+        L(
+          "현재 우측 미리보기는 이 카드와 별개로 입력문의 CSG를 즉시 계산합니다.",
+          "The preview on the right is computed live from the input's CSG, independently of this card.",
+        ),
+      ],
       url: `${SYNTAX_MANUAL}#${keyword}`,
     };
   }
   if (card.kind === "include") {
     return {
-      title: "다른 입력 파일을 현재 모델에 포함합니다",
-      description: "큰 모델을 형상·물질·설정 파일로 나눠 관리할 때 사용합니다.",
+      title: L("다른 입력 파일을 현재 모델에 포함합니다", "Includes another input file in the current model"),
+      description: L(
+        "큰 모델을 형상·물질·설정 파일로 나눠 관리할 때 사용합니다.",
+        "Used to split a large model into separate geometry, material, and settings files for easier management.",
+      ),
       syntax: 'include "FILE"',
-      tips: ["경로에 공백이나 특수문자가 있으면 따옴표로 감쌉니다.", "브라우저 미리보기는 로컬 include 파일을 자동으로 읽을 수 없으므로 내용을 직접 합쳐야 합니다."],
+      tips: [
+        L("경로에 공백이나 특수문자가 있으면 따옴표로 감쌉니다.", "Wrap the path in quotes if it contains spaces or special characters."),
+        L(
+          "브라우저 미리보기는 로컬 include 파일을 자동으로 읽을 수 없으므로 내용을 직접 합쳐야 합니다.",
+          "The browser preview cannot automatically read a local include file, so you'll need to merge its contents in manually.",
+        ),
+      ],
       url: `${SYNTAX_MANUAL}#include`,
     };
   }
   if (keyword === "pin") {
     return {
-      title: "동심 원통층으로 핀 유니버스를 만듭니다",
-      description: "재료와 외부 반지름을 안쪽부터 차례로 적어 연료봉 같은 반복 구조를 간단히 정의합니다.",
+      title: L("동심 원통층으로 핀 유니버스를 만듭니다", "Builds a pin universe from concentric cylindrical layers"),
+      description: L(
+        "재료와 외부 반지름을 안쪽부터 차례로 적어 연료봉 같은 반복 구조를 간단히 정의합니다.",
+        "List materials and outer radii from the inside out to easily define a repeating structure like a fuel rod.",
+      ),
       syntax: "pin UNI  MAT₁ R₁  MAT₂ R₂ … MATₙ",
-      tips: ["반지름은 cm 단위이며 바깥쪽으로 갈수록 증가해야 합니다.", "마지막 재료 영역은 바깥 방향으로 무한히 이어집니다."],
+      tips: [
+        L("반지름은 cm 단위이며 바깥쪽으로 갈수록 증가해야 합니다.", "Radii are in cm and must increase outward."),
+        L("마지막 재료 영역은 바깥 방향으로 무한히 이어집니다.", "The last material region extends infinitely outward."),
+      ],
       url: `${SYNTAX_MANUAL}#pin`,
     };
   }
   if (keyword === "lat") {
     return {
-      title: "반복되는 유니버스를 격자에 배치합니다",
-      description: "격자 형식, 원점, 피치, 크기와 유니버스 배열을 이용해 반복 형상을 구성합니다.",
+      title: L("반복되는 유니버스를 격자에 배치합니다", "Arranges repeating universes on a lattice"),
+      description: L(
+        "격자 형식, 원점, 피치, 크기와 유니버스 배열을 이용해 반복 형상을 구성합니다.",
+        "Builds a repeating geometry using a lattice type, origin, pitch, size, and universe array.",
+      ),
       syntax: "lat UNI TYPE X₀ Y₀ NX NY PITCH …",
-      tips: ["격자 TYPE에 따라 필요한 좌표와 배열 형식이 달라집니다.", "배치되는 각 항목은 별도로 정의된 유니버스 이름입니다."],
+      tips: [
+        L("격자 TYPE에 따라 필요한 좌표와 배열 형식이 달라집니다.", "The required coordinates and array format depend on the lattice TYPE."),
+        L("배치되는 각 항목은 별도로 정의된 유니버스 이름입니다.", "Each entry placed is the name of a separately defined universe."),
+      ],
       url: `${SYNTAX_MANUAL}#lat`,
     };
   }
   if (keyword === "ene") {
     return {
-      title: "검출기 등에 사용할 에너지 군 구조를 정의합니다",
-      description: "경계값 목록 또는 선형·로그 균등 구간으로 에너지 빈을 만듭니다.",
-      syntax: "ene NAME TYPE E₁ E₂ …  또는  ene NAME TYPE N EMIN EMAX",
-      tips: ["에너지 단위는 MeV입니다.", "TYPE 1은 경계 목록, TYPE 2·3은 선형·로그 균등 구간입니다."],
+      title: L("검출기 등에 사용할 에너지 군 구조를 정의합니다", "Defines an energy group structure for use in detectors and elsewhere"),
+      description: L(
+        "경계값 목록 또는 선형·로그 균등 구간으로 에너지 빈을 만듭니다.",
+        "Builds energy bins from a list of boundary values, or from evenly spaced linear or logarithmic intervals.",
+      ),
+      syntax: L("ene NAME TYPE E₁ E₂ …  또는  ene NAME TYPE N EMIN EMAX", "ene NAME TYPE E₁ E₂ …  or  ene NAME TYPE N EMIN EMAX"),
+      tips: [
+        L("에너지 단위는 MeV입니다.", "Energy units are MeV."),
+        L("TYPE 1은 경계 목록, TYPE 2·3은 선형·로그 균등 구간입니다.", "TYPE 1 is a boundary list; TYPE 2 and 3 are evenly spaced linear and logarithmic intervals."),
+      ],
       url: `${SYNTAX_MANUAL}#ene`,
     };
   }
   if (keyword === "therm" || keyword === "thermstoch") {
     return {
-      title: "결합 원자의 저에너지 중성자 산란 데이터를 연결합니다",
-      description: "물질 카드의 moder 옵션에서 사용하는 열산란 이름과 S(α,β) 라이브러리를 연결합니다.",
+      title: L("결합 원자의 저에너지 중성자 산란 데이터를 연결합니다", "Links low-energy neutron scattering data for bound atoms"),
+      description: L(
+        "물질 카드의 moder 옵션에서 사용하는 열산란 이름과 S(α,β) 라이브러리를 연결합니다.",
+        "Links a thermal-scattering name used by a material card's moder option to an S(α,β) library.",
+      ),
       syntax: `${keyword} THNAME [T] LIB₁ [LIB₂ …]`,
-      tips: ["THNAME은 mat 카드의 moder 이름과 일치해야 합니다.", "온도 단위를 생략하면 Kelvin으로 해석됩니다."],
+      tips: [
+        L("THNAME은 mat 카드의 moder 이름과 일치해야 합니다.", "THNAME must match the moder name used on the mat card."),
+        L("온도 단위를 생략하면 Kelvin으로 해석됩니다.", "If the temperature unit is omitted, it's interpreted as Kelvin."),
+      ],
       url: `${SYNTAX_MANUAL}#${keyword}`,
     };
   }
   if (keyword === "dep") {
     return {
-      title: "연소·방사화 계산의 시간 또는 연소도 구간을 정의합니다",
-      description: "각 구간의 단계 형식과 값을 순서대로 지정해 조성 변화 계산 이력을 만듭니다.",
+      title: L("연소·방사화 계산의 시간 또는 연소도 구간을 정의합니다", "Defines the time or burnup steps for a burnup/activation calculation"),
+      description: L(
+        "각 구간의 단계 형식과 값을 순서대로 지정해 조성 변화 계산 이력을 만듭니다.",
+        "Specifies the step type and value for each interval in order, building the composition-change calculation history.",
+      ),
       syntax: "dep TYPE STEP₁ STEP₂ …",
-      tips: ["단계 형식에 따라 일(day), MWd/kgU 또는 누적값으로 해석됩니다.", "출력·출력밀도 등 정규화 조건은 구간 사이에서 변경할 수 있습니다."],
+      tips: [
+        L(
+          "단계 형식에 따라 일(day), MWd/kgU 또는 누적값으로 해석됩니다.",
+          "Depending on the step type, values are interpreted as days, MWd/kgU, or cumulative values.",
+        ),
+        L(
+          "출력·출력밀도 등 정규화 조건은 구간 사이에서 변경할 수 있습니다.",
+          "Normalization conditions such as power or power density can be changed between steps.",
+        ),
+      ],
       url: `${SYNTAX_MANUAL}#dep`,
     };
   }
   if (["trans", "transa", "transb", "transv", "strans", "ftrans", "dtrans", "utrans"].includes(keyword)) {
     return {
-      title: "표면·유니버스·소스·검출기 등의 좌표를 이동하거나 회전합니다",
-      description: "기본 형상을 복제하지 않고 위치와 방향을 바꿀 때 사용하는 좌표 변환 카드입니다.",
+      title: L(
+        "표면·유니버스·소스·검출기 등의 좌표를 이동하거나 회전합니다",
+        "Translates or rotates the coordinates of surfaces, universes, sources, detectors, and more",
+      ),
+      description: L(
+        "기본 형상을 복제하지 않고 위치와 방향을 바꿀 때 사용하는 좌표 변환 카드입니다.",
+        "A coordinate-transformation card used to change position and orientation without duplicating the underlying geometry.",
+      ),
       syntax: `${keyword} TARGET NAME  X Y Z  [ROTATION …]`,
-      tips: ["변환 대상 형식에 따라 첫 인수와 회전 표현이 달라집니다.", "구형 transa·strans·ftrans·dtrans·utrans 대신 최신 trans 문법을 권장합니다."],
+      tips: [
+        L("변환 대상 형식에 따라 첫 인수와 회전 표현이 달라집니다.", "The first argument and rotation notation depend on the type of the transformation target."),
+        L(
+          "구형 transa·strans·ftrans·dtrans·utrans 대신 최신 trans 문법을 권장합니다.",
+          "The current trans syntax is recommended over the legacy transa, strans, ftrans, dtrans, and utrans cards.",
+        ),
+      ],
       url: `${SYNTAX_MANUAL}#${keyword}`,
     };
   }
   if (card.kind === "setting") {
     return {
-      title: `계산 옵션 set ${option}`,
-      description: "Serpent의 물리 모델, 계산 제어, 출력 또는 수치 알고리즘을 조정하는 입력 옵션입니다.",
+      title: L(`계산 옵션 set ${option}`, `Calculation option set ${option}`),
+      description: L(
+        "Serpent의 물리 모델, 계산 제어, 출력 또는 수치 알고리즘을 조정하는 입력 옵션입니다.",
+        "An input option that adjusts Serpent's physics models, run control, output, or numerical algorithms.",
+      ),
       syntax: `set ${option} ${data.values || "VALUE …"}`,
-      tips: ["값의 개수와 허용 범위는 옵션마다 다릅니다.", "기본값을 바꾸는 옵션이므로 공식 문법의 Notes와 제한 조건을 함께 확인하세요."],
+      tips: [
+        L("값의 개수와 허용 범위는 옵션마다 다릅니다.", "The number of values and allowed range differ by option."),
+        L(
+          "기본값을 바꾸는 옵션이므로 공식 문법의 Notes와 제한 조건을 함께 확인하세요.",
+          "This option changes a default value, so also check the Notes and constraints in the official syntax reference.",
+        ),
+      ],
       url: `${SYNTAX_MANUAL}#set-${option}`,
     };
   }
 
   return {
-    title: "Serpent 입력 카드",
-    description: "이 카드는 Serpent 입력 파서가 하나의 독립된 데이터 블록으로 처리합니다.",
+    title: L("Serpent 입력 카드", "Serpent input card"),
+    description: L(
+      "이 카드는 Serpent 입력 파서가 하나의 독립된 데이터 블록으로 처리합니다.",
+      "The Serpent input parser treats this card as a single, independent data block.",
+    ),
     syntax: `${card.keyword} ${data.name ?? "…"}`.trim(),
-    tips: ["옵션 순서와 필수 인수는 공식 입력 문법에서 확인하세요.", "카드 식별자와 같은 이름을 사용자 정의 인수로 사용하지 않는 것이 안전합니다."],
+    tips: [
+      L("옵션 순서와 필수 인수는 공식 입력 문법에서 확인하세요.", "Check the official input syntax reference for option order and required arguments."),
+      L(
+        "카드 식별자와 같은 이름을 사용자 정의 인수로 사용하지 않는 것이 안전합니다.",
+        "It's safest not to reuse the card identifier itself as a user-defined argument name.",
+      ),
+    ],
     url: `${SYNTAX_MANUAL}#${keyword === "set" ? `set-${option}` : keyword}`,
   };
 }
 
-function fieldHint(card: SerpentCard, key: string, data: Record<string, string>) {
+function fieldHint(card: SerpentCard, key: string, data: Record<string, string>, locale: UiLocale) {
+  const L = (ko: string, en: string) => (locale === "en" ? en : ko);
   const option = data.name?.toLowerCase() ?? "";
-  if (card.kind === "surface" && key === "type") return "예: cyl, sph, px, pz, sqc, pad";
-  if (card.kind === "surface" && key === "values") return surfaceParameterHint(data.type ?? "");
-  if (card.kind === "cell" && key === "universe") return "0은 최상위(root) 유니버스입니다.";
-  if (card.kind === "cell" && key === "material") return "mat 카드의 이름, void, outside 또는 fill을 입력합니다.";
-  if (card.kind === "cell" && key === "region") return "음수: 표면의 음의 면 · 양수: 양의 면 · 공백: 교집합 · 콜론(:): 합집합";
-  if (card.kind === "material" && key === "density") return "음수: 질량밀도(g/cm³) · 양수: 원자밀도";
-  if (card.kind === "material" && key === "composition") return "한 줄에 핵종명과 분율/밀도를 입력합니다. 예: 92235.09c  4.9E-02";
-  if (card.kind === "setting" && option === "pop" && key === "values") return "세대당 중성자 수  활성 세대  비활성 세대  [초기 k-eff  배치 간격  독립 계산 수]";
-  if (card.kind === "setting" && option === "nps" && key === "values") return "전체 입자 이력 수  [배치 수  시간 빈]";
-  if (card.kind === "setting" && option === "bc" && key === "values") return "1: 흡수 · 2: 반사 · 3: 주기 · 선택적으로 albedo를 추가합니다.";
-  if (card.kind === "source" && key === "values") return "예: n sp 0 0 0 se 1.0 — 중성자 점 소스와 에너지";
-  if (card.kind === "detector" && key === "values") return "예: dm fuel dr -6 fuel de energy_grid";
+  if (card.kind === "surface" && key === "type") return L("예: cyl, sph, px, pz, sqc, pad", "e.g. cyl, sph, px, pz, sqc, pad");
+  if (card.kind === "surface" && key === "values") return surfaceParameterHint(data.type ?? "", locale);
+  if (card.kind === "cell" && key === "universe") return L("0은 최상위(root) 유니버스입니다.", "0 is the top-level (root) universe.");
+  if (card.kind === "cell" && key === "material") return L("mat 카드의 이름, void, outside 또는 fill을 입력합니다.", "Enter a mat card's name, void, outside, or fill.");
+  if (card.kind === "cell" && key === "region") {
+    return L(
+      "음수: 표면의 음의 면 · 양수: 양의 면 · 공백: 교집합 · 콜론(:): 합집합",
+      "Negative: the surface's negative side · Positive: its positive side · Space: intersection · Colon (:): union",
+    );
+  }
+  if (card.kind === "material" && key === "density") return L("음수: 질량밀도(g/cm³) · 양수: 원자밀도", "Negative: mass density (g/cm³) · Positive: atomic density");
+  if (card.kind === "material" && key === "composition") {
+    return L("한 줄에 핵종명과 분율/밀도를 입력합니다. 예: 92235.09c  4.9E-02", "Enter one nuclide name and fraction/density per line. e.g. 92235.09c  4.9E-02");
+  }
+  if (card.kind === "setting" && option === "pop" && key === "values") {
+    return L(
+      "세대당 중성자 수  활성 세대  비활성 세대  [초기 k-eff  배치 간격  독립 계산 수]",
+      "Neutrons per generation  active generations  inactive generations  [initial k-eff  batch interval  number of independent runs]",
+    );
+  }
+  if (card.kind === "setting" && option === "nps" && key === "values") return L("전체 입자 이력 수  [배치 수  시간 빈]", "Total particle histories  [batch count  time bins]");
+  if (card.kind === "setting" && option === "bc" && key === "values") {
+    return L("1: 흡수 · 2: 반사 · 3: 주기 · 선택적으로 albedo를 추가합니다.", "1: absorbing · 2: reflective · 3: periodic · optionally add an albedo.");
+  }
+  if (card.kind === "source" && key === "values") return L("예: n sp 0 0 0 se 1.0 — 중성자 점 소스와 에너지", "e.g. n sp 0 0 0 se 1.0 — a neutron point source with an energy");
+  if (card.kind === "detector" && key === "values") return L("예: dm fuel dr -6 fuel de energy_grid", "e.g. dm fuel dr -6 fuel de energy_grid");
   return "";
 }
 
@@ -440,22 +630,28 @@ function numericValues(value: string) {
   return value.trim().split(/\s+/).map(Number).filter(Number.isFinite);
 }
 
-function boundaryMode(value: string) {
-  return { "1": "흡수(black) — 입자를 종료", "2": "반사(reflective) — 대칭 방향으로 반사", "3": "주기(periodic) — 반대편 경계로 이동" }[value] ?? "사용자 지정 경계조건";
+function boundaryMode(value: string, locale: UiLocale) {
+  const L = (ko: string, en: string) => (locale === "en" ? en : ko);
+  return {
+    "1": L("흡수(black) — 입자를 종료", "black (absorbing) — terminates the particle"),
+    "2": L("반사(reflective) — 대칭 방향으로 반사", "reflective — reflects the particle symmetrically"),
+    "3": L("주기(periodic) — 반대편 경계로 이동", "periodic — moves the particle to the opposite boundary"),
+  }[value] ?? L("사용자 지정 경계조건", "custom boundary condition");
 }
 
-function interpretOptionSequence(tokens: string[], definitions: Record<string, [number, string]>) {
+function interpretOptionSequence(tokens: string[], definitions: Record<string, [number, string]>, locale: UiLocale) {
+  const L = (ko: string, en: string) => (locale === "en" ? en : ko);
   const result: ValueMeaning[] = [];
   let index = 0;
   if (tokens[0] === "n" || tokens[0] === "p") {
-    result.push({ label: "입자 종류", value: tokens[0], meaning: tokens[0] === "n" ? "중성자" : "광자" });
+    result.push({ label: L("입자 종류", "Particle type"), value: tokens[0], meaning: tokens[0] === "n" ? L("중성자", "Neutron") : L("광자", "Photon") });
     index = 1;
   }
   while (index < tokens.length && result.length < 10) {
     const option = tokens[index];
     const definition = definitions[option];
     if (!definition) {
-      result.push({ label: `인수 ${index + 1}`, value: option, meaning: "추가 위치 인수 또는 옵션 값" });
+      result.push({ label: L(`인수 ${index + 1}`, `Argument ${index + 1}`), value: option, meaning: L("추가 위치 인수 또는 옵션 값", "Additional positional argument or option value") });
       index += 1;
       continue;
     }
@@ -467,7 +663,8 @@ function interpretOptionSequence(tokens: string[], definitions: Record<string, [
   return result;
 }
 
-function interpretCardValues(card: SerpentCard, data: Record<string, string>): ValueMeaning[] {
+function interpretCardValues(card: SerpentCard, data: Record<string, string>, locale: UiLocale): ValueMeaning[] {
+  const L = (ko: string, en: string) => (locale === "en" ? en : ko);
   const keyword = card.keyword.toLowerCase();
   const option = data.name?.toLowerCase() ?? "";
 
@@ -475,37 +672,51 @@ function interpretCardValues(card: SerpentCard, data: Record<string, string>): V
     const values = numericValues(data.values ?? "");
     const type = data.type?.toLowerCase();
     const entries: ValueMeaning[] = [
-      { label: "표면 이름", value: data.name || "—", meaning: "셀과 검출기에서 이 경계를 참조할 때 사용하는 식별자" },
-      { label: "표면 형식", value: data.type || "—", meaning: surfaceParameterHint(data.type ?? "") },
+      { label: L("표면 이름", "Surface name"), value: data.name || "—", meaning: L("셀과 검출기에서 이 경계를 참조할 때 사용하는 식별자", "The identifier used to reference this boundary from cell and detector cards") },
+      { label: L("표면 형식", "Surface type"), value: data.type || "—", meaning: surfaceParameterHint(data.type ?? "", locale) },
     ];
     if (type === "px" || type === "py" || type === "pz") {
       const axis = type.at(-1);
-      entries.push({ label: `${axis}₀`, value: `${values[0] ?? "—"} cm`, meaning: `${axis}축 원점에서 평면까지의 부호 있는 거리` });
+      entries.push({ label: `${axis}₀`, value: `${values[0] ?? "—"} cm`, meaning: L(`${axis}축 원점에서 평면까지의 부호 있는 거리`, `Signed distance from the origin to the plane along the ${axis}-axis`) });
     } else if (type === "cyl" || type === "cylz") {
       entries.push(
-        { label: "중심", value: `(${values[0] ?? "—"}, ${values[1] ?? "—"}) cm`, meaning: "XY 평면에서 원통 중심 좌표" },
-        { label: "반지름 r", value: `${values[2] ?? "—"} cm`, meaning: `직경은 ${Number.isFinite(values[2]) ? (values[2] * 2).toFixed(3) : "—"} cm` },
+        { label: L("중심", "Center"), value: `(${values[0] ?? "—"}, ${values[1] ?? "—"}) cm`, meaning: L("XY 평면에서 원통 중심 좌표", "Cylinder center coordinates in the XY plane") },
+        { label: L("반지름 r", "Radius r"), value: `${values[2] ?? "—"} cm`, meaning: L(`직경은 ${Number.isFinite(values[2]) ? (values[2] * 2).toFixed(3) : "—"} cm`, `Diameter is ${Number.isFinite(values[2]) ? (values[2] * 2).toFixed(3) : "—"} cm`) },
       );
-      if (values.length >= 5) entries.push({ label: "축 방향 범위", value: `${values[3]} … ${values[4]} cm`, meaning: "절단 원통의 z 최소·최대 위치" });
+      if (values.length >= 5) entries.push({ label: L("축 방향 범위", "Axial extent"), value: `${values[3]} … ${values[4]} cm`, meaning: L("절단 원통의 z 최소·최대 위치", "Min/max z position of the truncated cylinder") });
     } else if (type === "sph") {
       entries.push(
-        { label: "중심", value: `(${values[0] ?? "—"}, ${values[1] ?? "—"}, ${values[2] ?? "—"}) cm`, meaning: "구 중심의 X·Y·Z 좌표" },
-        { label: "반지름 r", value: `${values[3] ?? "—"} cm`, meaning: `직경은 ${Number.isFinite(values[3]) ? (values[3] * 2).toFixed(3) : "—"} cm` },
+        { label: L("중심", "Center"), value: `(${values[0] ?? "—"}, ${values[1] ?? "—"}, ${values[2] ?? "—"}) cm`, meaning: L("구 중심의 X·Y·Z 좌표", "X, Y, Z coordinates of the sphere's center") },
+        { label: L("반지름 r", "Radius r"), value: `${values[3] ?? "—"} cm`, meaning: L(`직경은 ${Number.isFinite(values[3]) ? (values[3] * 2).toFixed(3) : "—"} cm`, `Diameter is ${Number.isFinite(values[3]) ? (values[3] * 2).toFixed(3) : "—"} cm`) },
       );
     } else if (type === "sqc") {
       entries.push(
-        { label: "중심", value: `(${values[0] ?? "—"}, ${values[1] ?? "—"}) cm`, meaning: "정사각 기둥 중심 좌표" },
-        { label: "반폭 r", value: `${values[2] ?? "—"} cm`, meaning: `전체 폭은 ${Number.isFinite(values[2]) ? (values[2] * 2).toFixed(3) : "—"} cm` },
+        { label: L("중심", "Center"), value: `(${values[0] ?? "—"}, ${values[1] ?? "—"}) cm`, meaning: L("정사각 기둥 중심 좌표", "Center coordinates of the square prism") },
+        { label: L("반폭 r", "Half-width r"), value: `${values[2] ?? "—"} cm`, meaning: L(`전체 폭은 ${Number.isFinite(values[2]) ? (values[2] * 2).toFixed(3) : "—"} cm`, `Full width is ${Number.isFinite(values[2]) ? (values[2] * 2).toFixed(3) : "—"} cm`) },
       );
-      if (Number.isFinite(values[3])) entries.push({ label: "모서리 반경", value: `${values[3]} cm`, meaning: "둥근 모서리에 적용되는 반경" });
+      if (Number.isFinite(values[3])) entries.push({ label: L("모서리 반경", "Corner radius"), value: `${values[3]} cm`, meaning: L("둥근 모서리에 적용되는 반경", "Radius applied to the rounded corners") });
     } else if (type === "pad") {
       entries.push(
-        { label: "중심", value: `(${values[0] ?? "—"}, ${values[1] ?? "—"}) cm`, meaning: "원환 부채꼴의 중심" },
-        { label: "반경 구간", value: `${values[2] ?? "—"} … ${values[3] ?? "—"} cm`, meaning: `두께는 ${Number.isFinite(values[2]) && Number.isFinite(values[3]) ? Math.abs(values[3] - values[2]).toFixed(3) : "—"} cm` },
-        { label: "각도 구간", value: `${values[4] ?? "—"}° … ${values[5] ?? "—"}°`, meaning: `열림각은 ${Number.isFinite(values[4]) && Number.isFinite(values[5]) ? Math.abs(values[5] - values[4]).toFixed(3) : "—"}°` },
+        { label: L("중심", "Center"), value: `(${values[0] ?? "—"}, ${values[1] ?? "—"}) cm`, meaning: L("원환 부채꼴의 중심", "Center of the annular sector") },
+        {
+          label: L("반경 구간", "Radial range"),
+          value: `${values[2] ?? "—"} … ${values[3] ?? "—"} cm`,
+          meaning: L(
+            `두께는 ${Number.isFinite(values[2]) && Number.isFinite(values[3]) ? Math.abs(values[3] - values[2]).toFixed(3) : "—"} cm`,
+            `Thickness is ${Number.isFinite(values[2]) && Number.isFinite(values[3]) ? Math.abs(values[3] - values[2]).toFixed(3) : "—"} cm`,
+          ),
+        },
+        {
+          label: L("각도 구간", "Angular range"),
+          value: `${values[4] ?? "—"}° … ${values[5] ?? "—"}°`,
+          meaning: L(
+            `열림각은 ${Number.isFinite(values[4]) && Number.isFinite(values[5]) ? Math.abs(values[5] - values[4]).toFixed(3) : "—"}°`,
+            `Opening angle is ${Number.isFinite(values[4]) && Number.isFinite(values[5]) ? Math.abs(values[5] - values[4]).toFixed(3) : "—"}°`,
+          ),
+        },
       );
     } else {
-      values.slice(0, 8).forEach((value, index) => entries.push({ label: `PARAM ${index + 1}`, value: String(value), meaning: `${data.type || "표면"} 형식의 ${index + 1}번째 인수` }));
+      values.slice(0, 8).forEach((value, index) => entries.push({ label: `PARAM ${index + 1}`, value: String(value), meaning: L(`${data.type || "표면"} 형식의 ${index + 1}번째 인수`, `Argument ${index + 1} of the ${data.type || "surface"} type`) }));
     }
     return entries;
   }
@@ -514,14 +725,31 @@ function interpretCardValues(card: SerpentCard, data: Record<string, string>): V
     const region = data.region ?? "";
     const surfaces = region.match(/[+-]?[A-Za-z0-9_.]+/g) ?? [];
     return [
-      { label: "셀 이름", value: data.name || "—", meaning: "src·det 카드 등에서 이 공간을 참조할 때 사용하는 이름" },
-      { label: "유니버스", value: data.universe || "—", meaning: data.universe === "0" ? "최상위(root) 유니버스" : `유니버스 ${data.universe} 내부에 배치` },
-      { label: "채움", value: data.material || "—", meaning: data.material === "outside" ? "계산 영역 바깥" : data.material === "void" ? "물질이 없는 빈 공간" : `물질 또는 fill 유니버스 '${data.material}' 사용` },
-      { label: "영역식", value: region || "—", meaning: region.includes(":") ? "합집합(:)을 포함한 Boolean 영역" : "나열된 모든 표면 조건의 교집합" },
+      { label: L("셀 이름", "Cell name"), value: data.name || "—", meaning: L("src·det 카드 등에서 이 공간을 참조할 때 사용하는 이름", "The name used to reference this space from src, det, and other cards") },
+      {
+        label: L("유니버스", "Universe"),
+        value: data.universe || "—",
+        meaning: data.universe === "0" ? L("최상위(root) 유니버스", "Top-level (root) universe") : L(`유니버스 ${data.universe} 내부에 배치`, `Placed inside universe ${data.universe}`),
+      },
+      {
+        label: L("채움", "Fill"),
+        value: data.material || "—",
+        meaning:
+          data.material === "outside" ? L("계산 영역 바깥", "Outside the computational domain") :
+          data.material === "void" ? L("물질이 없는 빈 공간", "Empty space with no material") :
+          L(`물질 또는 fill 유니버스 '${data.material}' 사용`, `Uses the material or fill universe '${data.material}'`),
+      },
+      {
+        label: L("영역식", "Region expression"),
+        value: region || "—",
+        meaning: region.includes(":") ? L("합집합(:)을 포함한 Boolean 영역", "A Boolean region containing a union (:)") : L("나열된 모든 표면 조건의 교집합", "The intersection of every listed surface condition"),
+      },
       ...surfaces.slice(0, 8).map((surface) => ({
-        label: `경계 ${surface.replace(/^[+-]/, "")}`,
-        value: surface.startsWith("-") ? "음의 면" : "양의 면",
-        meaning: surface.startsWith("-") ? "해당 표면 함수가 음수인 쪽(닫힌 표면은 일반적으로 내부)" : "해당 표면 함수가 양수인 쪽(닫힌 표면은 일반적으로 외부)",
+        label: L(`경계 ${surface.replace(/^[+-]/, "")}`, `Boundary ${surface.replace(/^[+-]/, "")}`),
+        value: surface.startsWith("-") ? L("음의 면", "negative side") : L("양의 면", "positive side"),
+        meaning: surface.startsWith("-")
+          ? L("해당 표면 함수가 음수인 쪽(닫힌 표면은 일반적으로 내부)", "The side where the surface function is negative (usually the interior for a closed surface)")
+          : L("해당 표면 함수가 양수인 쪽(닫힌 표면은 일반적으로 외부)", "The side where the surface function is positive (usually the exterior for a closed surface)"),
       })),
     ];
   }
@@ -530,64 +758,76 @@ function interpretCardValues(card: SerpentCard, data: Record<string, string>): V
     const density = Number(data.density);
     const composition = (data.composition ?? "").split("\n").map((line) => line.trim()).filter(Boolean);
     const entries: ValueMeaning[] = [
-      { label: "물질 이름", value: data.name || "—", meaning: "cell 카드에서 이 조성을 참조하는 이름" },
+      { label: L("물질 이름", "Material name"), value: data.name || "—", meaning: L("cell 카드에서 이 조성을 참조하는 이름", "The name cell cards use to reference this composition") },
       {
-        label: "기준 밀도",
+        label: L("기준 밀도", "Reference density"),
         value: data.density || "—",
-        meaning: Number.isFinite(density) ? density < 0 ? `질량밀도 ${Math.abs(density)} g/cm³` : `원자밀도 ${density} atoms/(barn·cm)` : "밀도 값을 확인하세요.",
+        meaning: Number.isFinite(density)
+          ? density < 0
+            ? L(`질량밀도 ${Math.abs(density)} g/cm³`, `Mass density ${Math.abs(density)} g/cm³`)
+            : L(`원자밀도 ${density} atoms/(barn·cm)`, `Atomic density ${density} atoms/(barn·cm)`)
+          : L("밀도 값을 확인하세요.", "Check the density value."),
       },
-      { label: "핵종 수", value: `${composition.length}개`, meaning: "현재 조성 블록에 입력된 핵종 또는 원소 항목 수" },
+      { label: L("핵종 수", "Nuclide count"), value: L(`${composition.length}개`, `${composition.length}`), meaning: L("현재 조성 블록에 입력된 핵종 또는 원소 항목 수", "The number of nuclide or element entries in the current composition block") },
     ];
     const options = data.options?.trim();
-    if (options) entries.push({ label: "물질 옵션", value: options, meaning: "burn, tmp/tms, moder, rgb 등 물질에 적용되는 추가 설정" });
+    if (options) entries.push({ label: L("물질 옵션", "Material options"), value: options, meaning: L("burn, tmp/tms, moder, rgb 등 물질에 적용되는 추가 설정", "Additional settings applied to the material, such as burn, tmp/tms, moder, or rgb") });
     composition.slice(0, 7).forEach((line) => {
       const [nuclide, fraction = ""] = line.split(/\s+/);
       const amount = Number(fraction);
       const fractionMeaning = Number.isFinite(amount)
-        ? amount < 0 ? `질량 기준 성분값 ${Math.abs(amount)}` : `원자 기준 성분값 ${amount}`
-        : "핵종 조성 값";
+        ? amount < 0
+          ? L(`질량 기준 성분값 ${Math.abs(amount)}`, `Mass-based fraction ${Math.abs(amount)}`)
+          : L(`원자 기준 성분값 ${amount}`, `Atom-based fraction ${amount}`)
+        : L("핵종 조성 값", "Nuclide composition value");
       const nuclideInfo = parseNuclideId(nuclide);
       entries.push({
         label: nuclide,
         value: fraction || "—",
-        meaning: nuclideInfo ? `${describeNuclide(nuclideInfo)} · ${fractionMeaning}` : fractionMeaning,
+        meaning: nuclideInfo ? `${describeNuclide(nuclideInfo, locale)} · ${fractionMeaning}` : fractionMeaning,
       });
     });
-    if (composition.length > 7) entries.push({ label: "나머지 조성", value: `${composition.length - 7}개`, meaning: "아래 핵종 조성 입력란에서 전체 항목을 확인할 수 있습니다." });
+    if (composition.length > 7) {
+      entries.push({
+        label: L("나머지 조성", "Remaining composition"),
+        value: L(`${composition.length - 7}개`, `${composition.length - 7}`),
+        meaning: L("아래 핵종 조성 입력란에서 전체 항목을 확인할 수 있습니다.", "See the nuclide composition field below for the full list."),
+      });
+    }
     return entries;
   }
 
   if (card.kind === "title") {
-    return [{ label: "계산 제목", value: data.values || "—", meaning: "실행 로그와 표준 결과 파일에 표시되는 사례 이름" }];
+    return [{ label: L("계산 제목", "Calculation title"), value: data.values || "—", meaning: L("실행 로그와 표준 결과 파일에 표시되는 사례 이름", "The case name shown in the run log and the standard result file") }];
   }
 
   if (card.kind === "setting" && option === "pop") {
     const values = (data.values ?? "").split(/\s+/).filter(Boolean);
     return [
-      { label: "NPG", value: values[0] ?? "—", meaning: "한 세대에서 추적할 중성자 수" },
-      { label: "NGEN", value: values[1] ?? "—", meaning: "통계에 포함되는 활성 세대 수" },
-      { label: "NSKIP", value: values[2] ?? "—", meaning: "초기 소스 수렴을 위해 버리는 비활성 세대 수" },
-      ...(values[3] ? [{ label: "K₀", value: values[3], meaning: "초기 k-effective 추정값" }] : []),
+      { label: "NPG", value: values[0] ?? "—", meaning: L("한 세대에서 추적할 중성자 수", "Neutrons tracked per generation") },
+      { label: "NGEN", value: values[1] ?? "—", meaning: L("통계에 포함되는 활성 세대 수", "Active generations included in the statistics") },
+      { label: "NSKIP", value: values[2] ?? "—", meaning: L("초기 소스 수렴을 위해 버리는 비활성 세대 수", "Inactive generations discarded for initial source convergence") },
+      ...(values[3] ? [{ label: "K₀", value: values[3], meaning: L("초기 k-effective 추정값", "Initial k-effective estimate") }] : []),
     ];
   }
 
   if (card.kind === "setting" && option === "nps") {
     const values = (data.values ?? "").split(/\s+/).filter(Boolean);
     return [
-      { label: "NP", value: values[0] ?? "—", meaning: "외부 소스 계산에서 추적할 전체 입자 이력 수" },
-      ...(values[1] ? [{ label: "BTCH", value: values[1], meaning: "통계 처리를 위한 배치 수" }] : []),
-      ...(values[2] ? [{ label: "TBI", value: values[2], meaning: "동적 모드에서 사용할 시간 빈 구조" }] : []),
+      { label: "NP", value: values[0] ?? "—", meaning: L("외부 소스 계산에서 추적할 전체 입자 이력 수", "Total particle histories tracked in the external-source calculation") },
+      ...(values[1] ? [{ label: "BTCH", value: values[1], meaning: L("통계 처리를 위한 배치 수", "Batch count used for statistical processing") }] : []),
+      ...(values[2] ? [{ label: "TBI", value: values[2], meaning: L("동적 모드에서 사용할 시간 빈 구조", "Time-bin structure used in dynamic mode") }] : []),
     ];
   }
 
   if (card.kind === "setting" && option === "bc") {
     const values = (data.values ?? "").split(/\s+/).filter(Boolean);
     if (values.length >= 3) {
-      return ["x", "y", "z"].map((axis, index) => ({ label: `${axis.toUpperCase()} 경계`, value: values[index] ?? "—", meaning: boundaryMode(values[index]) }));
+      return ["x", "y", "z"].map((axis, index) => ({ label: L(`${axis.toUpperCase()} 경계`, `${axis.toUpperCase()} boundary`), value: values[index] ?? "—", meaning: boundaryMode(values[index], locale) }));
     }
     return [
-      { label: "전체 방향 경계", value: values[0] ?? "—", meaning: boundaryMode(values[0]) },
-      ...(values[1] ? [{ label: "Albedo", value: values[1], meaning: "경계 통과 시 입자 통계 가중치에 곱하는 계수" }] : []),
+      { label: L("전체 방향 경계", "All-direction boundary"), value: values[0] ?? "—", meaning: boundaryMode(values[0], locale) },
+      ...(values[1] ? [{ label: "Albedo", value: values[1], meaning: L("경계 통과 시 입자 통계 가중치에 곱하는 계수", "Factor multiplied into the particle's statistical weight when it crosses the boundary") }] : []),
     ];
   }
 
@@ -595,74 +835,74 @@ function interpretCardValues(card: SerpentCard, data: Record<string, string>): V
     const [value = "—", material] = (data.values ?? "").split(/\s+/);
     const units = option === "power" ? "W" : option === "powdens" ? "kW/g" : "particles/s";
     return [
-      { label: option, value: `${value} ${units}`, meaning: "결과를 물리량으로 환산할 때 사용하는 정규화 기준" },
-      ...(material ? [{ label: "기준 물질", value: material, meaning: "정규화를 이 물질의 기여도에 한정" }] : []),
+      { label: option, value: `${value} ${units}`, meaning: L("결과를 물리량으로 환산할 때 사용하는 정규화 기준", "The normalization basis used to convert results into physical quantities") },
+      ...(material ? [{ label: L("기준 물질", "Reference material"), value: material, meaning: L("정규화를 이 물질의 기여도에 한정", "Restricts normalization to this material's contribution") }] : []),
     ];
   }
 
   if (card.kind === "setting") {
     return (data.values ?? "").split(/\s+/).filter(Boolean).slice(0, 10).map((value, index) => ({
-      label: index === 0 ? `set ${option}` : `인수 ${index + 1}`,
+      label: index === 0 ? `set ${option}` : L(`인수 ${index + 1}`, `Argument ${index + 1}`),
       value,
-      meaning: index === 0 ? "이 옵션의 첫 번째 설정값" : `set ${option} 옵션의 ${index + 1}번째 설정값`,
+      meaning: index === 0 ? L("이 옵션의 첫 번째 설정값", "The first setting value for this option") : L(`set ${option} 옵션의 ${index + 1}번째 설정값`, `The ${index + 1}th setting value for the set ${option} option`),
     }));
   }
 
   if (card.kind === "source") {
     const tokens = (data.values ?? "").split(/\s+/).filter(Boolean);
     return [
-      { label: "소스 이름", value: data.name || "—", meaning: "소스 분포 식별자" },
+      { label: L("소스 이름", "Source name"), value: data.name || "—", meaning: L("소스 분포 식별자", "Identifier for the source distribution") },
       ...interpretOptionSequence(tokens, {
-        sp: [3, "점 소스 또는 분포 중심의 X·Y·Z 좌표(cm)"],
-        sc: [1, "이 셀 내부에서 소스 위치를 샘플링"],
-        sm: [1, "이 물질 내부에서 소스 위치를 샘플링"],
-        su: [1, "이 유니버스 내부에서 소스 위치를 샘플링"],
-        ss: [1, "지정 표면에서 입자를 방출"],
-        sx: [2, "X 방향 샘플링 최소·최대 범위(cm)"],
-        sy: [2, "Y 방향 샘플링 최소·최대 범위(cm)"],
-        sz: [2, "Z 방향 샘플링 최소·최대 범위(cm)"],
-        srad: [2, "방사 방향 최소·최대 반경(cm)"],
-        se: [1, "단일 입자 에너지(MeV)"],
-        sd: [3, "입자 진행 방향 벡터"],
-      }),
+        sp: [3, L("점 소스 또는 분포 중심의 X·Y·Z 좌표(cm)", "X, Y, Z coordinates (cm) of the point source or distribution center")],
+        sc: [1, L("이 셀 내부에서 소스 위치를 샘플링", "Samples the source position inside this cell")],
+        sm: [1, L("이 물질 내부에서 소스 위치를 샘플링", "Samples the source position inside this material")],
+        su: [1, L("이 유니버스 내부에서 소스 위치를 샘플링", "Samples the source position inside this universe")],
+        ss: [1, L("지정 표면에서 입자를 방출", "Emits particles from the specified surface")],
+        sx: [2, L("X 방향 샘플링 최소·최대 범위(cm)", "Min/max sampling range along X (cm)")],
+        sy: [2, L("Y 방향 샘플링 최소·최대 범위(cm)", "Min/max sampling range along Y (cm)")],
+        sz: [2, L("Z 방향 샘플링 최소·최대 범위(cm)", "Min/max sampling range along Z (cm)")],
+        srad: [2, L("방사 방향 최소·최대 반경(cm)", "Min/max radius in the radial direction (cm)")],
+        se: [1, L("단일 입자 에너지(MeV)", "Single particle energy (MeV)")],
+        sd: [3, L("입자 진행 방향 벡터", "Particle direction vector")],
+      }, locale),
     ];
   }
 
   if (card.kind === "detector") {
     const tokens = (data.values ?? "").split(/\s+/).filter(Boolean);
     return [
-      { label: "검출기 이름", value: data.name || "—", meaning: "출력 변수 DET[NAME]에 사용되는 식별자" },
+      { label: L("검출기 이름", "Detector name"), value: data.name || "—", meaning: L("출력 변수 DET[NAME]에 사용되는 식별자", "The identifier used in the output variable DET[NAME]") },
       ...interpretOptionSequence(tokens, {
-        dc: [1, "이 셀에 집계 영역을 제한"],
-        dm: [1, "이 물질에 집계 영역을 제한"],
-        du: [1, "이 유니버스에 집계 영역을 제한"],
-        dl: [1, "이 격자에 집계 영역을 제한"],
-        ds: [2, "표면과 방향을 지정한 입자 전류 검출"],
-        de: [1, "결과에 적용할 에너지 격자"],
-        dr: [2, "MT 반응번호와 응답 물질"],
-        dv: [1, "검출기 체적 또는 결과 나눗셈 계수"],
-      }),
+        dc: [1, L("이 셀에 집계 영역을 제한", "Restricts the tally region to this cell")],
+        dm: [1, L("이 물질에 집계 영역을 제한", "Restricts the tally region to this material")],
+        du: [1, L("이 유니버스에 집계 영역을 제한", "Restricts the tally region to this universe")],
+        dl: [1, L("이 격자에 집계 영역을 제한", "Restricts the tally region to this lattice")],
+        ds: [2, L("표면과 방향을 지정한 입자 전류 검출", "Detects particle current with a specified surface and direction")],
+        de: [1, L("결과에 적용할 에너지 격자", "The energy grid applied to the results")],
+        dr: [2, L("MT 반응번호와 응답 물질", "The MT reaction number and response material")],
+        dv: [1, L("검출기 체적 또는 결과 나눗셈 계수", "Detector volume or a divisor applied to the results")],
+      }, locale),
     ];
   }
 
   if (card.kind === "plot" && keyword === "plot") {
     const values = [data.name, ...(data.values ?? "").split(/\s+/)].filter(Boolean);
-    const plane = { "1": "YZ", "2": "XZ", "3": "XY" }[values[0]] ?? "사용자 지정";
+    const plane = { "1": "YZ", "2": "XZ", "3": "XY" }[values[0]] ?? L("사용자 지정", "custom");
     return [
-      { label: "단면 방향", value: values[0] ?? "—", meaning: `${plane} 평면` },
-      { label: "이미지 크기", value: `${values[1] ?? "—"} × ${values[2] ?? "—"} px`, meaning: "Serpent가 생성할 PNG의 가로·세로 픽셀 수" },
-      ...(values[3] ? [{ label: "단면 위치", value: `${values[3]} cm`, meaning: "단면에 수직인 축의 좌표" }] : []),
+      { label: L("단면 방향", "Cross-section direction"), value: values[0] ?? "—", meaning: L(`${plane} 평면`, `${plane} plane`) },
+      { label: L("이미지 크기", "Image size"), value: `${values[1] ?? "—"} × ${values[2] ?? "—"} px`, meaning: L("Serpent가 생성할 PNG의 가로·세로 픽셀 수", "The width/height in pixels of the PNG Serpent generates") },
+      ...(values[3] ? [{ label: L("단면 위치", "Cross-section position"), value: `${values[3]} cm`, meaning: L("단면에 수직인 축의 좌표", "The coordinate on the axis perpendicular to the cross-section") }] : []),
     ];
   }
 
   if (keyword === "pin") {
     const tokens = (data.values ?? "").split(/\s+/).filter(Boolean);
-    const entries: ValueMeaning[] = [{ label: "핀 유니버스", value: data.name || "—", meaning: "격자나 fill에서 참조할 동심 원통 구조 이름" }];
+    const entries: ValueMeaning[] = [{ label: L("핀 유니버스", "Pin universe"), value: data.name || "—", meaning: L("격자나 fill에서 참조할 동심 원통 구조 이름", "The name of this concentric-cylinder structure, referenced from a lattice or fill") }];
     for (let index = 0; index < tokens.length; index += 2) {
       entries.push({
-        label: `층 ${index / 2 + 1}`,
+        label: L(`층 ${index / 2 + 1}`, `Layer ${index / 2 + 1}`),
         value: tokens[index + 1] ? `${tokens[index]} · R ${tokens[index + 1]} cm` : tokens[index],
-        meaning: tokens[index + 1] ? "해당 물질층의 외부 반지름" : "반지름 제한 없이 이어지는 최외곽 물질",
+        meaning: tokens[index + 1] ? L("해당 물질층의 외부 반지름", "Outer radius of this material layer") : L("반지름 제한 없이 이어지는 최외곽 물질", "The outermost material, extending with no radius limit"),
       });
     }
     return entries;
@@ -670,9 +910,9 @@ function interpretCardValues(card: SerpentCard, data: Record<string, string>): V
 
   const values = [data.name, ...(data.values ?? "").split(/\s+/)].filter(Boolean);
   return values.slice(0, 10).map((value, index) => ({
-    label: index === 0 ? "첫 번째 인수" : `인수 ${index + 1}`,
+    label: index === 0 ? L("첫 번째 인수", "First argument") : L(`인수 ${index + 1}`, `Argument ${index + 1}`),
     value,
-    meaning: `${card.keyword} 카드의 ${index + 1}번째 입력값`,
+    meaning: L(`${card.keyword} 카드의 ${index + 1}번째 입력값`, `The ${index + 1}th input value of the ${card.keyword} card`),
   }));
 }
 
@@ -918,8 +1158,8 @@ export default function Home() {
 
   const selected = cards.find((card) => card.id === selectedId) ?? cards.find((card) => card.kind === "surface") ?? cards[0];
   const selectedData = selected ? getCardData(selected) : {};
-  const selectedGuide = selected ? guideForCard(selected, selectedData) : null;
-  const selectedMeanings = selected ? interpretCardValues(selected, selectedData) : [];
+  const selectedGuide = selected ? guideForCard(selected, selectedData, uiLocale) : null;
+  const selectedMeanings = selected ? interpretCardValues(selected, selectedData, uiLocale) : [];
   const errors = issues.filter((issue) => issue.level === "error").length;
   const issuesTone = errors ? "bad" : issues.length ? "warn" : "ok";
   // 형상 겹침·빈틈 검사는 격자 표본점만 확인하므로 "정상"이라고 단정하지 않는다.
@@ -931,7 +1171,7 @@ export default function Home() {
 
   const groupedCards = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    const entries = cards.map((card) => ({ card, summary: cardSummary(card), group: cardCategory(card) }));
+    const entries = cards.map((card) => ({ card, summary: cardSummary(card, uiLocale), group: cardCategory(card) }));
     const visible = needle
       ? entries.filter(({ card, summary }) =>
           `${summary.name} ${summary.meta} ${card.keyword}`.toLowerCase().includes(needle))
@@ -940,7 +1180,7 @@ export default function Home() {
       ...group,
       items: visible.filter((entry) => entry.group === group.name),
     })).filter((group) => group.items.length);
-  }, [cards, query]);
+  }, [cards, query, uiLocale]);
 
   const matchCount = groupedCards.reduce((total, group) => total + group.items.length, 0);
 
@@ -1843,10 +2083,10 @@ export default function Home() {
               <div className="form-grid">
                 {Object.entries(selectedData).map(([key, value]) => {
                   const wide = ["values", "region", "composition", "comment"].includes(key);
-                  const hint = fieldHint(selected, key, selectedData);
+                  const hint = fieldHint(selected, key, selectedData, uiLocale);
                   return (
                     <label className={wide ? "field wide" : "field"} key={`${selected.id}-${key}`}>
-                      <span>{fieldLabel(selected, key)}</span>
+                      <span>{fieldLabel(selected, key, uiLocale)}</span>
                       {key === "composition" ? (
                         <div className="composition-editor">
                           <textarea
@@ -1869,7 +2109,7 @@ export default function Home() {
                                     <code>{nuclideToken}</code>
                                     <span>
                                       {info
-                                        ? describeNuclide(info)
+                                        ? describeNuclide(info, uiLocale)
                                         : t("라이브러리 접미사(예: .09c)가 없어 해석할 수 없습니다.")}
                                     </span>
                                   </div>

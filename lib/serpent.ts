@@ -1385,81 +1385,83 @@ export function geometryPlotBounds(model: GeometryModel, basis: PlotBasis): Plot
 
 // ---------------------------------------------------------------- nuclides
 
-/** Z(1~118)별 원소 기호와 한글 명칭. ZAID의 앞 1~3자리(Z)를 원소로 표시하는 데 사용한다. */
-const ELEMENTS: Record<number, { symbol: string; nameKo: string }> = {
-  1: { symbol: "H", nameKo: "수소" }, 2: { symbol: "He", nameKo: "헬륨" },
-  3: { symbol: "Li", nameKo: "리튬" }, 4: { symbol: "Be", nameKo: "베릴륨" },
-  5: { symbol: "B", nameKo: "붕소" }, 6: { symbol: "C", nameKo: "탄소" },
-  7: { symbol: "N", nameKo: "질소" }, 8: { symbol: "O", nameKo: "산소" },
-  9: { symbol: "F", nameKo: "플루오린" }, 10: { symbol: "Ne", nameKo: "네온" },
-  11: { symbol: "Na", nameKo: "나트륨" }, 12: { symbol: "Mg", nameKo: "마그네슘" },
-  13: { symbol: "Al", nameKo: "알루미늄" }, 14: { symbol: "Si", nameKo: "규소" },
-  15: { symbol: "P", nameKo: "인" }, 16: { symbol: "S", nameKo: "황" },
-  17: { symbol: "Cl", nameKo: "염소" }, 18: { symbol: "Ar", nameKo: "아르곤" },
-  19: { symbol: "K", nameKo: "칼륨" }, 20: { symbol: "Ca", nameKo: "칼슘" },
-  21: { symbol: "Sc", nameKo: "스칸듐" }, 22: { symbol: "Ti", nameKo: "티타늄" },
-  23: { symbol: "V", nameKo: "바나듐" }, 24: { symbol: "Cr", nameKo: "크로뮴" },
-  25: { symbol: "Mn", nameKo: "망가니즈" }, 26: { symbol: "Fe", nameKo: "철" },
-  27: { symbol: "Co", nameKo: "코발트" }, 28: { symbol: "Ni", nameKo: "니켈" },
-  29: { symbol: "Cu", nameKo: "구리" }, 30: { symbol: "Zn", nameKo: "아연" },
-  31: { symbol: "Ga", nameKo: "갈륨" }, 32: { symbol: "Ge", nameKo: "저마늄" },
-  33: { symbol: "As", nameKo: "비소" }, 34: { symbol: "Se", nameKo: "셀레늄" },
-  35: { symbol: "Br", nameKo: "브로민" }, 36: { symbol: "Kr", nameKo: "크립톤" },
-  37: { symbol: "Rb", nameKo: "루비듐" }, 38: { symbol: "Sr", nameKo: "스트론튬" },
-  39: { symbol: "Y", nameKo: "이트륨" }, 40: { symbol: "Zr", nameKo: "지르코늄" },
-  41: { symbol: "Nb", nameKo: "나이오븀" }, 42: { symbol: "Mo", nameKo: "몰리브데넘" },
-  43: { symbol: "Tc", nameKo: "테크네튬" }, 44: { symbol: "Ru", nameKo: "루테늄" },
-  45: { symbol: "Rh", nameKo: "로듐" }, 46: { symbol: "Pd", nameKo: "팔라듐" },
-  47: { symbol: "Ag", nameKo: "은" }, 48: { symbol: "Cd", nameKo: "카드뮴" },
-  49: { symbol: "In", nameKo: "인듐" }, 50: { symbol: "Sn", nameKo: "주석" },
-  51: { symbol: "Sb", nameKo: "안티모니" }, 52: { symbol: "Te", nameKo: "텔루륨" },
-  53: { symbol: "I", nameKo: "아이오딘" }, 54: { symbol: "Xe", nameKo: "제논" },
-  55: { symbol: "Cs", nameKo: "세슘" }, 56: { symbol: "Ba", nameKo: "바륨" },
-  57: { symbol: "La", nameKo: "란타넘" }, 58: { symbol: "Ce", nameKo: "세륨" },
-  59: { symbol: "Pr", nameKo: "프라세오디뮴" }, 60: { symbol: "Nd", nameKo: "네오디뮴" },
-  61: { symbol: "Pm", nameKo: "프로메튬" }, 62: { symbol: "Sm", nameKo: "사마륨" },
-  63: { symbol: "Eu", nameKo: "유로퓸" }, 64: { symbol: "Gd", nameKo: "가돌리늄" },
-  65: { symbol: "Tb", nameKo: "터븀" }, 66: { symbol: "Dy", nameKo: "디스프로슘" },
-  67: { symbol: "Ho", nameKo: "홀뮴" }, 68: { symbol: "Er", nameKo: "어븀" },
-  69: { symbol: "Tm", nameKo: "툴륨" }, 70: { symbol: "Yb", nameKo: "이터븀" },
-  71: { symbol: "Lu", nameKo: "루테튬" }, 72: { symbol: "Hf", nameKo: "하프늄" },
-  73: { symbol: "Ta", nameKo: "탄탈럼" }, 74: { symbol: "W", nameKo: "텅스텐" },
-  75: { symbol: "Re", nameKo: "레늄" }, 76: { symbol: "Os", nameKo: "오스뮴" },
-  77: { symbol: "Ir", nameKo: "이리듐" }, 78: { symbol: "Pt", nameKo: "백금" },
-  79: { symbol: "Au", nameKo: "금" }, 80: { symbol: "Hg", nameKo: "수은" },
-  81: { symbol: "Tl", nameKo: "탈륨" }, 82: { symbol: "Pb", nameKo: "납" },
-  83: { symbol: "Bi", nameKo: "비스무트" }, 84: { symbol: "Po", nameKo: "폴로늄" },
-  85: { symbol: "At", nameKo: "아스타틴" }, 86: { symbol: "Rn", nameKo: "라돈" },
-  87: { symbol: "Fr", nameKo: "프랑슘" }, 88: { symbol: "Ra", nameKo: "라듐" },
-  89: { symbol: "Ac", nameKo: "악티늄" }, 90: { symbol: "Th", nameKo: "토륨" },
-  91: { symbol: "Pa", nameKo: "프로트악티늄" }, 92: { symbol: "U", nameKo: "우라늄" },
-  93: { symbol: "Np", nameKo: "넵투늄" }, 94: { symbol: "Pu", nameKo: "플루토늄" },
-  95: { symbol: "Am", nameKo: "아메리슘" }, 96: { symbol: "Cm", nameKo: "퀴륨" },
-  97: { symbol: "Bk", nameKo: "버클륨" }, 98: { symbol: "Cf", nameKo: "캘리포늄" },
-  99: { symbol: "Es", nameKo: "아인슈타이늄" }, 100: { symbol: "Fm", nameKo: "페르뮴" },
-  101: { symbol: "Md", nameKo: "멘델레븀" }, 102: { symbol: "No", nameKo: "노벨륨" },
-  103: { symbol: "Lr", nameKo: "로렌슘" }, 104: { symbol: "Rf", nameKo: "러더포듐" },
-  105: { symbol: "Db", nameKo: "더브늄" }, 106: { symbol: "Sg", nameKo: "시보귬" },
-  107: { symbol: "Bh", nameKo: "보륨" }, 108: { symbol: "Hs", nameKo: "하슘" },
-  109: { symbol: "Mt", nameKo: "마이트너륨" }, 110: { symbol: "Ds", nameKo: "다름슈타튬" },
-  111: { symbol: "Rg", nameKo: "뢴트게늄" }, 112: { symbol: "Cn", nameKo: "코페르니슘" },
-  113: { symbol: "Nh", nameKo: "니호늄" }, 114: { symbol: "Fl", nameKo: "플레로븀" },
-  115: { symbol: "Mc", nameKo: "모스코븀" }, 116: { symbol: "Lv", nameKo: "리버모륨" },
-  117: { symbol: "Ts", nameKo: "테네신" }, 118: { symbol: "Og", nameKo: "오가네손" },
+/** Z(1~118)별 원소 기호와 한글·영문 명칭. ZAID의 앞 1~3자리(Z)를 원소로 표시하는 데 사용한다. */
+const ELEMENTS: Record<number, { symbol: string; nameKo: string; nameEn: string }> = {
+  1: { symbol: "H", nameKo: "수소", nameEn: "Hydrogen" }, 2: { symbol: "He", nameKo: "헬륨", nameEn: "Helium" },
+  3: { symbol: "Li", nameKo: "리튬", nameEn: "Lithium" }, 4: { symbol: "Be", nameKo: "베릴륨", nameEn: "Beryllium" },
+  5: { symbol: "B", nameKo: "붕소", nameEn: "Boron" }, 6: { symbol: "C", nameKo: "탄소", nameEn: "Carbon" },
+  7: { symbol: "N", nameKo: "질소", nameEn: "Nitrogen" }, 8: { symbol: "O", nameKo: "산소", nameEn: "Oxygen" },
+  9: { symbol: "F", nameKo: "플루오린", nameEn: "Fluorine" }, 10: { symbol: "Ne", nameKo: "네온", nameEn: "Neon" },
+  11: { symbol: "Na", nameKo: "나트륨", nameEn: "Sodium" }, 12: { symbol: "Mg", nameKo: "마그네슘", nameEn: "Magnesium" },
+  13: { symbol: "Al", nameKo: "알루미늄", nameEn: "Aluminium" }, 14: { symbol: "Si", nameKo: "규소", nameEn: "Silicon" },
+  15: { symbol: "P", nameKo: "인", nameEn: "Phosphorus" }, 16: { symbol: "S", nameKo: "황", nameEn: "Sulfur" },
+  17: { symbol: "Cl", nameKo: "염소", nameEn: "Chlorine" }, 18: { symbol: "Ar", nameKo: "아르곤", nameEn: "Argon" },
+  19: { symbol: "K", nameKo: "칼륨", nameEn: "Potassium" }, 20: { symbol: "Ca", nameKo: "칼슘", nameEn: "Calcium" },
+  21: { symbol: "Sc", nameKo: "스칸듐", nameEn: "Scandium" }, 22: { symbol: "Ti", nameKo: "티타늄", nameEn: "Titanium" },
+  23: { symbol: "V", nameKo: "바나듐", nameEn: "Vanadium" }, 24: { symbol: "Cr", nameKo: "크로뮴", nameEn: "Chromium" },
+  25: { symbol: "Mn", nameKo: "망가니즈", nameEn: "Manganese" }, 26: { symbol: "Fe", nameKo: "철", nameEn: "Iron" },
+  27: { symbol: "Co", nameKo: "코발트", nameEn: "Cobalt" }, 28: { symbol: "Ni", nameKo: "니켈", nameEn: "Nickel" },
+  29: { symbol: "Cu", nameKo: "구리", nameEn: "Copper" }, 30: { symbol: "Zn", nameKo: "아연", nameEn: "Zinc" },
+  31: { symbol: "Ga", nameKo: "갈륨", nameEn: "Gallium" }, 32: { symbol: "Ge", nameKo: "저마늄", nameEn: "Germanium" },
+  33: { symbol: "As", nameKo: "비소", nameEn: "Arsenic" }, 34: { symbol: "Se", nameKo: "셀레늄", nameEn: "Selenium" },
+  35: { symbol: "Br", nameKo: "브로민", nameEn: "Bromine" }, 36: { symbol: "Kr", nameKo: "크립톤", nameEn: "Krypton" },
+  37: { symbol: "Rb", nameKo: "루비듐", nameEn: "Rubidium" }, 38: { symbol: "Sr", nameKo: "스트론튬", nameEn: "Strontium" },
+  39: { symbol: "Y", nameKo: "이트륨", nameEn: "Yttrium" }, 40: { symbol: "Zr", nameKo: "지르코늄", nameEn: "Zirconium" },
+  41: { symbol: "Nb", nameKo: "나이오븀", nameEn: "Niobium" }, 42: { symbol: "Mo", nameKo: "몰리브데넘", nameEn: "Molybdenum" },
+  43: { symbol: "Tc", nameKo: "테크네튬", nameEn: "Technetium" }, 44: { symbol: "Ru", nameKo: "루테늄", nameEn: "Ruthenium" },
+  45: { symbol: "Rh", nameKo: "로듐", nameEn: "Rhodium" }, 46: { symbol: "Pd", nameKo: "팔라듐", nameEn: "Palladium" },
+  47: { symbol: "Ag", nameKo: "은", nameEn: "Silver" }, 48: { symbol: "Cd", nameKo: "카드뮴", nameEn: "Cadmium" },
+  49: { symbol: "In", nameKo: "인듐", nameEn: "Indium" }, 50: { symbol: "Sn", nameKo: "주석", nameEn: "Tin" },
+  51: { symbol: "Sb", nameKo: "안티모니", nameEn: "Antimony" }, 52: { symbol: "Te", nameKo: "텔루륨", nameEn: "Tellurium" },
+  53: { symbol: "I", nameKo: "아이오딘", nameEn: "Iodine" }, 54: { symbol: "Xe", nameKo: "제논", nameEn: "Xenon" },
+  55: { symbol: "Cs", nameKo: "세슘", nameEn: "Cesium" }, 56: { symbol: "Ba", nameKo: "바륨", nameEn: "Barium" },
+  57: { symbol: "La", nameKo: "란타넘", nameEn: "Lanthanum" }, 58: { symbol: "Ce", nameKo: "세륨", nameEn: "Cerium" },
+  59: { symbol: "Pr", nameKo: "프라세오디뮴", nameEn: "Praseodymium" }, 60: { symbol: "Nd", nameKo: "네오디뮴", nameEn: "Neodymium" },
+  61: { symbol: "Pm", nameKo: "프로메튬", nameEn: "Promethium" }, 62: { symbol: "Sm", nameKo: "사마륨", nameEn: "Samarium" },
+  63: { symbol: "Eu", nameKo: "유로퓸", nameEn: "Europium" }, 64: { symbol: "Gd", nameKo: "가돌리늄", nameEn: "Gadolinium" },
+  65: { symbol: "Tb", nameKo: "터븀", nameEn: "Terbium" }, 66: { symbol: "Dy", nameKo: "디스프로슘", nameEn: "Dysprosium" },
+  67: { symbol: "Ho", nameKo: "홀뮴", nameEn: "Holmium" }, 68: { symbol: "Er", nameKo: "어븀", nameEn: "Erbium" },
+  69: { symbol: "Tm", nameKo: "툴륨", nameEn: "Thulium" }, 70: { symbol: "Yb", nameKo: "이터븀", nameEn: "Ytterbium" },
+  71: { symbol: "Lu", nameKo: "루테튬", nameEn: "Lutetium" }, 72: { symbol: "Hf", nameKo: "하프늄", nameEn: "Hafnium" },
+  73: { symbol: "Ta", nameKo: "탄탈럼", nameEn: "Tantalum" }, 74: { symbol: "W", nameKo: "텅스텐", nameEn: "Tungsten" },
+  75: { symbol: "Re", nameKo: "레늄", nameEn: "Rhenium" }, 76: { symbol: "Os", nameKo: "오스뮴", nameEn: "Osmium" },
+  77: { symbol: "Ir", nameKo: "이리듐", nameEn: "Iridium" }, 78: { symbol: "Pt", nameKo: "백금", nameEn: "Platinum" },
+  79: { symbol: "Au", nameKo: "금", nameEn: "Gold" }, 80: { symbol: "Hg", nameKo: "수은", nameEn: "Mercury" },
+  81: { symbol: "Tl", nameKo: "탈륨", nameEn: "Thallium" }, 82: { symbol: "Pb", nameKo: "납", nameEn: "Lead" },
+  83: { symbol: "Bi", nameKo: "비스무트", nameEn: "Bismuth" }, 84: { symbol: "Po", nameKo: "폴로늄", nameEn: "Polonium" },
+  85: { symbol: "At", nameKo: "아스타틴", nameEn: "Astatine" }, 86: { symbol: "Rn", nameKo: "라돈", nameEn: "Radon" },
+  87: { symbol: "Fr", nameKo: "프랑슘", nameEn: "Francium" }, 88: { symbol: "Ra", nameKo: "라듐", nameEn: "Radium" },
+  89: { symbol: "Ac", nameKo: "악티늄", nameEn: "Actinium" }, 90: { symbol: "Th", nameKo: "토륨", nameEn: "Thorium" },
+  91: { symbol: "Pa", nameKo: "프로트악티늄", nameEn: "Protactinium" }, 92: { symbol: "U", nameKo: "우라늄", nameEn: "Uranium" },
+  93: { symbol: "Np", nameKo: "넵투늄", nameEn: "Neptunium" }, 94: { symbol: "Pu", nameKo: "플루토늄", nameEn: "Plutonium" },
+  95: { symbol: "Am", nameKo: "아메리슘", nameEn: "Americium" }, 96: { symbol: "Cm", nameKo: "퀴륨", nameEn: "Curium" },
+  97: { symbol: "Bk", nameKo: "버클륨", nameEn: "Berkelium" }, 98: { symbol: "Cf", nameKo: "캘리포늄", nameEn: "Californium" },
+  99: { symbol: "Es", nameKo: "아인슈타이늄", nameEn: "Einsteinium" }, 100: { symbol: "Fm", nameKo: "페르뮴", nameEn: "Fermium" },
+  101: { symbol: "Md", nameKo: "멘델레븀", nameEn: "Mendelevium" }, 102: { symbol: "No", nameKo: "노벨륨", nameEn: "Nobelium" },
+  103: { symbol: "Lr", nameKo: "로렌슘", nameEn: "Lawrencium" }, 104: { symbol: "Rf", nameKo: "러더포듐", nameEn: "Rutherfordium" },
+  105: { symbol: "Db", nameKo: "더브늄", nameEn: "Dubnium" }, 106: { symbol: "Sg", nameKo: "시보귬", nameEn: "Seaborgium" },
+  107: { symbol: "Bh", nameKo: "보륨", nameEn: "Bohrium" }, 108: { symbol: "Hs", nameKo: "하슘", nameEn: "Hassium" },
+  109: { symbol: "Mt", nameKo: "마이트너륨", nameEn: "Meitnerium" }, 110: { symbol: "Ds", nameKo: "다름슈타튬", nameEn: "Darmstadtium" },
+  111: { symbol: "Rg", nameKo: "뢴트게늄", nameEn: "Roentgenium" }, 112: { symbol: "Cn", nameKo: "코페르니슘", nameEn: "Copernicium" },
+  113: { symbol: "Nh", nameKo: "니호늄", nameEn: "Nihonium" }, 114: { symbol: "Fl", nameKo: "플레로븀", nameEn: "Flerovium" },
+  115: { symbol: "Mc", nameKo: "모스코븀", nameEn: "Moscovium" }, 116: { symbol: "Lv", nameKo: "리버모륨", nameEn: "Livermorium" },
+  117: { symbol: "Ts", nameKo: "테네신", nameEn: "Tennessine" }, 118: { symbol: "Og", nameKo: "오가네손", nameEn: "Oganesson" },
 };
 
 /** ZAID(.02c 등) 라이브러리 접미사 문자가 뜻하는 데이터 종류. */
-const LIBRARY_TYPE_LABELS: Record<string, string> = {
-  c: "연속에너지 중성자 단면적",
-  d: "이산 반응 중성자 데이터",
-  y: "핵분열 생성물 수율 데이터",
-  t: "열중성자 산란 S(α,β) 데이터",
-  p: "연속에너지 광자(광원자) 데이터",
-  u: "광핵반응 데이터",
-  e: "연속에너지 전자 수송 데이터",
-  m: "다군(multigroup) 중성자 데이터",
-  g: "다군(multigroup) 감마 데이터",
+const LIBRARY_TYPE_LABELS: Record<string, { ko: string; en: string }> = {
+  c: { ko: "연속에너지 중성자 단면적", en: "Continuous-energy neutron cross sections" },
+  d: { ko: "이산 반응 중성자 데이터", en: "Discrete-reaction neutron data" },
+  y: { ko: "핵분열 생성물 수율 데이터", en: "Fission product yield data" },
+  t: { ko: "열중성자 산란 S(α,β) 데이터", en: "Thermal neutron scattering S(α,β) data" },
+  p: { ko: "연속에너지 광자(광원자) 데이터", en: "Continuous-energy photon (photo-atomic) data" },
+  u: { ko: "광핵반응 데이터", en: "Photonuclear data" },
+  e: { ko: "연속에너지 전자 수송 데이터", en: "Continuous-energy electron transport data" },
+  m: { ko: "다군(multigroup) 중성자 데이터", en: "Multigroup neutron data" },
+  g: { ko: "다군(multigroup) 감마 데이터", en: "Multigroup gamma data" },
 };
+
+export type NuclideLocale = "ko" | "en";
 
 export type NuclideInfo = {
   token: string;
@@ -1471,11 +1473,11 @@ export type NuclideInfo = {
   a?: number;
   element?: string;
   elementNameKo?: string;
+  elementNameEn?: string;
   /** 질량수가 해당 원소의 실제 동위원소 범위에서 벗어나 이성체(metastable) 표기로 추정되는지. */
   massSuspect: boolean;
   libraryId: string;
   libraryType: string;
-  libraryTypeLabel: string;
 };
 
 /**
@@ -1490,10 +1492,9 @@ export function parseNuclideId(raw: string): NuclideInfo | null {
   const suffixMatch = token.slice(dot + 1).match(/^(\d+)([a-zA-Z]+)$/);
   if (!idPart || !suffixMatch) return null;
   const [, libraryId, libraryType] = suffixMatch;
-  const libraryTypeLabel = LIBRARY_TYPE_LABELS[libraryType.toLowerCase()] ?? `미확인 접미사 '${libraryType}'`;
 
   if (!/^\d+$/.test(idPart)) {
-    return { token, isThermalName: true, isNatural: false, massSuspect: false, libraryId, libraryType, libraryTypeLabel };
+    return { token, isThermalName: true, isNatural: false, massSuspect: false, libraryId, libraryType };
   }
 
   const za = Number(idPart);
@@ -1512,30 +1513,42 @@ export function parseNuclideId(raw: string): NuclideInfo | null {
     a,
     element: entry?.symbol,
     elementNameKo: entry?.nameKo,
+    elementNameEn: entry?.nameEn,
     massSuspect,
     libraryId,
     libraryType,
-    libraryTypeLabel,
   };
 }
 
-/** parseNuclideId 결과를 한 줄짜리 한글 설명으로 요약한다. */
-export function describeNuclide(info: NuclideInfo): string {
-  const library = `라이브러리 ${info.libraryId}${info.libraryType} — ${info.libraryTypeLabel} (ID ${info.libraryId})`;
+/** parseNuclideId 결과를 한 줄짜리 설명으로 요약한다. */
+export function describeNuclide(info: NuclideInfo, locale: NuclideLocale = "ko"): string {
+  const L = (ko: string, en: string) => (locale === "en" ? en : ko);
+  const typeLabel = LIBRARY_TYPE_LABELS[info.libraryType.toLowerCase()]?.[locale] ?? L(`미확인 접미사 '${info.libraryType}'`, `Unrecognized suffix '${info.libraryType}'`);
+  const library = L(
+    `라이브러리 ${info.libraryId}${info.libraryType} — ${typeLabel} (ID ${info.libraryId})`,
+    `Library ${info.libraryId}${info.libraryType} — ${typeLabel} (ID ${info.libraryId})`,
+  );
 
   if (info.isThermalName) {
-    return `S(α,β) 열산란 라이브러리 '${info.token.slice(0, info.token.lastIndexOf("."))}' · ${library}`;
+    return L(
+      `S(α,β) 열산란 라이브러리 '${info.token.slice(0, info.token.lastIndexOf("."))}' · ${library}`,
+      `S(α,β) thermal scattering library '${info.token.slice(0, info.token.lastIndexOf("."))}' · ${library}`,
+    );
   }
   if (!info.element) {
-    return `Z=${info.z} — 등록되지 않은 원소 번호입니다. · ${library}`;
+    return L(`Z=${info.z} — 등록되지 않은 원소 번호입니다. · ${library}`, `Z=${info.z} — unregistered element number. · ${library}`);
   }
   const massLabel = info.isNatural
-    ? `${info.element} 천연 동위원소 구성 (모든 동위원소 자연 존재비 반영)`
+    ? L(`${info.element} 천연 동위원소 구성 (모든 동위원소 자연 존재비 반영)`, `${info.element} natural isotopic composition (reflects natural abundance of all isotopes)`)
     : info.massSuspect
-      ? `${info.element}, 인코딩된 질량수 ${info.a} — 실제 동위원소 범위를 벗어나 이성체·준안정 상태(m) 표기로 추정됩니다. 정확한 핵종은 라이브러리 문서를 확인하세요.`
+      ? L(
+          `${info.element}, 인코딩된 질량수 ${info.a} — 실제 동위원소 범위를 벗어나 이성체·준안정 상태(m) 표기로 추정됩니다. 정확한 핵종은 라이브러리 문서를 확인하세요.`,
+          `${info.element}, encoded mass number ${info.a} — outside the actual isotope range, likely an isomeric/metastable (m) notation. Check the library documentation for the exact nuclide.`,
+        )
       : `${info.element}-${info.a}`;
-  const nameKo = info.elementNameKo ? `${info.elementNameKo}, Z=${info.z}` : `Z=${info.z}`;
-  return `${massLabel} (${nameKo}) · ${library}`;
+  const elementName = locale === "en" ? info.elementNameEn : info.elementNameKo;
+  const nameLabel = elementName ? `${elementName}, Z=${info.z}` : `Z=${info.z}`;
+  return `${massLabel} (${nameLabel}) · ${library}`;
 }
 
 export const SAMPLE_INPUT = `% ================================================================
