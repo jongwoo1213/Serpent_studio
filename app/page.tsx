@@ -1716,12 +1716,6 @@ export default function Home() {
     if (snapshot) setGeometryImage(snapshot);
   }
 
-  function runValidation() {
-    setLogOpen(true);
-    setView("builder");
-    setShowIssues(true);
-  }
-
   return (
     <main
       className={dropping ? "app-shell dropping" : "app-shell"}
@@ -1824,9 +1818,6 @@ export default function Home() {
           </button>
           <button className="button ghost" onClick={downloadInput}>
             <Icon>↓</Icon> {t("내보내기")}
-          </button>
-          <button className="button primary" onClick={runValidation}>
-            <Icon>▶</Icon> {t("입력 검사")}
           </button>
         </div>
       </header>
