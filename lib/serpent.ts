@@ -1061,7 +1061,10 @@ function evaluateRegion(
       const surface = node.surface;
       if (!surface) return false;
       const value = surfaceValue(surface, x, y, z);
-      return node.positive ? value > 0 : value < 0;
+      // 양쪽을 >=0 / <0 으로 나눠 모든 점이 반드시 한쪽에 속하게 한다. 순수 >0 / <0 이면
+      // 표면 위(값이 정확히 0)에 놓인 점은 어느 쪽에도 속하지 못해 렌더링에 빈틈이 생긴다 —
+      // 예: pz 표면이 정확히 z=0에 있고 사용자가 그 단면을 보는 경우.
+      return node.positive ? value >= 0 : value < 0;
     }
   }
 }

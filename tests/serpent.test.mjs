@@ -141,6 +141,27 @@ test("classifyPoint / materialAtPoint agree on SAMPLE_INPUT and the model has no
   assert.deepEqual(diagnoseGeometry(model), []);
 });
 
+test("a point exactly on a splitting surface belongs to one side, not an undefined gap", () => {
+  // 실제 사례: pz 26005 가 정확히 z=0 에 있고, 위/아래 두 셀이 그 표면을 기준으로
+  // 나뉘어 있었다. 이전 코드는 표면 값이 정확히 0일 때 양쪽 부호 판정(>0, <0)에
+  // 모두 실패해 z=0 단면 전체가 "빈틈"으로 렌더링됐다.
+  const src = [
+    "surf bound cyl 0 0 5",
+    "surf mid pz 0",
+    "mat a -1\n1001.09c 1",
+    "mat b -1\n1001.09c 1",
+    "cell lower 0 a -bound -mid",
+    "cell upper 0 b -bound mid",
+    "cell out 0 outside bound",
+  ].join("\n");
+  const model = parseGeometryModel(parseSerpentInput(src));
+
+  const onPlane = classifyPoint(model, 0, 0, 0);
+  assert.notEqual(onPlane.status, "undefined");
+  assert.equal(onPlane.material, "b");
+  assert.deepEqual(diagnoseGeometry(model), []);
+});
+
 test("square lattice type 1 maps input rows top-to-bottom and evaluates local universes", () => {
   const src = [
     "surf inf inf",
