@@ -322,3 +322,39 @@ test("cylx and cyly place their radius third and truncate along their own axis",
   // 두 원통 모두 반지름이 2이므로, 반경 방향으로 3 떨어지면 둘 다 밖이다.
   assert.equal(materialAtPoint(model, 0, 3, 3), "air");
 });
+
+test("plane surfaces partition space by Ax+By+Cz=D on both sides, not just the positive one", () => {
+  // 실제 사례: 방위각 쐐기를 자르는 plane 표면 두 장으로 타일 셀을 정의했는데,
+  // plane 형식이 구현되어 있지 않으면 값이 항상 1(양의 면)로 취급되어 "-p1"(음의 면)
+  // 조건이 절대 참이 되지 않는다 — 그 결과 타일 셀은 어디에도 존재하지 않게 된다.
+  const src = [
+    "surf bound cyl 0 0 5",
+    "surf p1 plane 1 0 0 0",
+    "mat a -1\n1001.09c 1",
+    "mat b -1\n1001.09c 1",
+    "cell right 0 a -bound p1",
+    "cell left 0 b -bound -p1",
+    "cell out 0 outside bound",
+  ].join("\n");
+  const model = parseGeometryModel(parseSerpentInput(src));
+
+  assert.equal(materialAtPoint(model, 2, 0, 0), "a");
+  assert.equal(materialAtPoint(model, -2, 0, 0), "b");
+  assert.deepEqual(diagnoseGeometry(model), []);
+});
+
+test("a plane defined by three points uses their cross-product normal", () => {
+  // z=0 평면을 세 점 (0,0,0) (1,0,0) (0,1,0) 으로 정의 — 법선은 +z 방향이어야 한다.
+  const src = [
+    "surf bound sph 0 0 0 5",
+    "surf p1 plane 0 0 0  1 0 0  0 1 0",
+    "mat a -1\n1001.09c 1",
+    "mat b -1\n1001.09c 1",
+    "cell above 0 a -bound p1",
+    "cell below 0 b -bound -p1",
+  ].join("\n");
+  const model = parseGeometryModel(parseSerpentInput(src));
+
+  assert.equal(materialAtPoint(model, 0, 0, 2), "a");
+  assert.equal(materialAtPoint(model, 0, 0, -2), "b");
+});

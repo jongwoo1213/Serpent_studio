@@ -1009,6 +1009,23 @@ function surfaceValue(surface: GeometrySurface, x: number, y: number, z: number)
   if (surface.type === "px") return x - (v[0] ?? 0);
   if (surface.type === "py") return y - (v[0] ?? 0);
   if (surface.type === "pz") return z - (v[0] ?? 0);
+  if (surface.type === "plane") {
+    // 9개 값이면 세 점을 지나는 평면(법선은 (P2-P1)×(P3-P1)), 그 외에는 Ax+By+Cz=D 형식.
+    if (v.length >= 9) {
+      const [x1, y1, z1, x2, y2, z2, x3, y3, z3] = v;
+      const ux = x2 - x1, uy = y2 - y1, uz = z2 - z1;
+      const wx = x3 - x1, wy = y3 - y1, wz = z3 - z1;
+      const nx = uy * wz - uz * wy;
+      const ny = uz * wx - ux * wz;
+      const nz = ux * wy - uy * wx;
+      return nx * (x - x1) + ny * (y - y1) + nz * (z - z1);
+    }
+    const a = v[0] ?? 0;
+    const b = v[1] ?? 0;
+    const c = v[2] ?? 0;
+    const d = v[3] ?? 0;
+    return a * x + b * y + c * z - d;
+  }
   if (surface.type === "pad") {
     const dx = x - (v[0] ?? 0);
     const dy = y - (v[1] ?? 0);
