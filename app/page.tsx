@@ -2654,6 +2654,12 @@ const GeometryPreview = forwardRef<GeometryPreviewHandle, {
       for (const surface of model.surfaces.values()) {
         if (surface.type !== "pad") continue;
         const v = surface.values;
+        // 이 덧칠은 제어드럼 흡수체처럼 래스터가 놓칠 만큼 얇은 호를 또렷하게 살리려는 것이다.
+        // 그런데 pad 를 방위각 절단용으로만 쓰는 입력도 있다(예: r 0.01~200 으로 노심 전체를
+        // 가로지르는 타일 구획용 pad). 그런 pad 안에는 서로 다른 셀이 잔뜩 들어 있어서
+        // 중간 반경에서 뽑은 물질 하나로 칠해 버리면 멀쩡한 래스터를 통째로 덮어 버린다.
+        // 래스터가 스스로 표현할 수 있는 두께라면 손대지 않는다.
+        if (Math.abs((v[3] ?? 0) - (v[2] ?? 0)) * scale >= 2) continue;
         const { start, end } = padAngleRange(v);
         const middle = (((start + end) / 2) * Math.PI) / 180;
         const middleRadius = ((v[2] ?? 0) + (v[3] ?? 0)) / 2;
